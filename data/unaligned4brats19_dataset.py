@@ -123,6 +123,7 @@ def get_transform(opt, keys=['image']):
         opt.padding_size = (512, 512, 256)
         opt.patch_size = (256, 256, 3)
         opt.resize_size = (256, 256, 3)
+        mode = ['trilinear', 'trilinear', 'nearest']
         train_transform = transforms.Compose(
             [
                 transforms.LoadImaged(keys=keys),
@@ -151,7 +152,7 @@ def get_transform(opt, keys=['image']):
                 transforms.Rotate90d(keys=keys, k=-1, spatial_axes=(0, 1)),
                 transforms.RandScaleIntensityd(keys=keys[:-1], factors=0.1, prob=1.0),
                 transforms.RandShiftIntensityd(keys=keys[:-1], offsets=0.1, prob=1.0),
-                transforms.Resized(keys=keys, spatial_size=(256, 256, -1)),
+                transforms.Resized(keys=keys, spatial_size=(256, 256, -1), mode=mode),
                 # transforms.RandCropByPosNegLabeld(
                 #     keys=keys,
                 #     label_key="image",

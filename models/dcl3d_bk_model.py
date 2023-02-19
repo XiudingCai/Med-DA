@@ -12,8 +12,9 @@ from .RegGAN import Reg
 from .networks import init_net, Upsample2
 
 from util.util import AvgrageMeter
+from monai.losses import DiceLoss
+from monai.transforms import Activations, AsDiscrete, Compose
 import numpy as np
-
 class DCL3DModel(BaseModel):
     """ This class implements DCLGAN model.
     This code is inspired by CUT and CycleGAN.
@@ -47,6 +48,8 @@ class DCL3DModel(BaseModel):
         parser.add_argument('--r1_gamma', type=float, default=0.05, help='coef for r1 reg')
         parser.add_argument('--lazy_reg', type=int, default=None,
                             help='lazy regulariation.')
+        parser.add_argument('--lambda_A', type=float, default=10.0, help='weight for cycle loss (A -> B -> A)')
+        parser.add_argument('--lambda_B', type=float, default=10.0, help='weight for cycle loss (B -> A -> B)')
 
         parser.set_defaults(pool_size=0)  # no image pooling
 
@@ -76,7 +79,7 @@ class DCL3DModel(BaseModel):
             visual_names_B.append('idt_A')
 
         visual_names_B.append('real_B_gt')
-        self.loss_names += ['Dice_train', 'IoU_train', 'Dice_val', 'IoU_val']
+        self.loss_names += ['Dice_train', 'Dice_val', 'IoU_train', 'IoU_val']
 
         self.loss_Dice_train = 0
         self.loss_IoU_train = 0
@@ -97,6 +100,11 @@ class DCL3DModel(BaseModel):
         self.netG_B = networks.define_G(opt.input_nc, opt.output_nc, opt.ngf, opt.netG, opt.normG,
                                         not opt.no_dropout, opt.init_type, opt.init_gain, opt.no_antialias,
                                         opt.no_antialias_up, self.gpu_ids, opt)
+
+        # self.model_inferer = partial(sliding_window_inference,
+        #                              roi_size=(self.opt.patch_size[0], self.opt.patch_size[1], self.opt.patch_size[2]),
+        #                              sw_batch_size=1, predictor=model, overlap=0.5)
+
         self.netF1 = networks.define_F(opt.input_nc, opt.netF, opt.normG,
                                        not opt.no_dropout, opt.init_type, opt.init_gain, opt.no_antialias, self.gpu_ids,
                                        opt)
@@ -104,10 +112,13 @@ class DCL3DModel(BaseModel):
                                        not opt.no_dropout, opt.init_type, opt.init_gain, opt.no_antialias, self.gpu_ids,
                                        opt)
         opt.input_nc = 1
-        self.netS_A = networks.define_G(opt.input_nc, opt.input_nc, opt.ngf, 'unet_256', opt.normG, not opt.no_dropout,
+        opt.num_classes = 3
+        self.netS_A = networks.define_G(opt.input_nc, opt.num_classes, opt.ngf, 'unet_256', opt.normG,
+                                        not opt.no_dropout,
                                         opt.init_type, opt.init_gain, opt.no_antialias, opt.no_antialias_up,
                                         self.gpu_ids, opt)
-        self.netS_B = networks.define_G(opt.input_nc, opt.input_nc, opt.ngf, 'unet_256', opt.normG, not opt.no_dropout,
+        self.netS_B = networks.define_G(opt.input_nc, opt.num_classes, opt.ngf, 'unet_256', opt.normG,
+                                        not opt.no_dropout,
                                         opt.init_type, opt.init_gain, opt.no_antialias, opt.no_antialias_up,
                                         self.gpu_ids, opt)
 
@@ -128,7 +139,8 @@ class DCL3DModel(BaseModel):
             self.fake_B_pool = ImagePool(opt.pool_size)  # create image buffer to store previously generated images
             # define loss functions
             self.criterionGAN = networks.GANLoss(opt.gan_mode).to(self.device)
-            self.criterionSEG = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor([10.])).to(self.device)
+            # self.criterionSEG = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor([10.])).to(self.device)
+            self.criterionSEG  = DiceLoss(to_onehot_y=False, sigmoid=True)
 
             self.criterionNCE = []
 
@@ -136,7 +148,7 @@ class DCL3DModel(BaseModel):
                 self.criterionNCE.append(PatchNCELoss(opt).to(self.device))
 
             self.criterionIdt = torch.nn.L1Loss().to(self.device)
-            self.criterionSim = torch.nn.L1Loss('sum').to(self.device)
+
             self.optimizer_G = torch.optim.Adam(itertools.chain(self.netG_A.parameters(), self.netG_B.parameters()),
                                                 lr=opt.lr, betas=(opt.beta1, opt.beta2))
             self.optimizer_D = torch.optim.Adam(itertools.chain(self.netD_A.parameters(), self.netD_B.parameters()),
@@ -195,7 +207,7 @@ class DCL3DModel(BaseModel):
         if self.opt.netF == 'mlp_sample':
             self.optimizer_F.step()
 
-    def set_input(self, input, test=False):
+    def set_input(self, input):
         """Unpack input data from the dataloader and perform necessary pre-processing steps.
         Parameters:
             input (dict): include the data itself and its metadata information.
@@ -203,25 +215,21 @@ class DCL3DModel(BaseModel):
         """
         assert self.opt.direction == 'AtoB', 'only support AtoB.'
         AtoB = self.opt.direction == 'AtoB'
-        self.real_A = input['A' if AtoB else 'B'].to(self.device)
-        self.real_B = input['B' if AtoB else 'A'].to(self.device)
-        self.real_RA = input['RA' if AtoB else 'RB'].to(self.device)
-        self.real_RB = input['RB' if AtoB else 'RA'].to(self.device)
+        self.real_A = input['A' if AtoB else 'B'].to(self.device).squeeze(-1)
+        self.real_B = input['B' if AtoB else 'A'].to(self.device).squeeze(-1)
+        self.real_RA = input['RA' if AtoB else 'RB'].to(self.device).squeeze(-1)
+        self.real_RB = input['RB' if AtoB else 'RA'].to(self.device).squeeze(-1)
 
-        self.real_B_gt = input['B_gt'].to(self.device)
-        self.real_B_gt[self.real_B_gt > 0] = 1
-        self.real_B_gt[self.real_B_gt <= 0] = 0
-        self.real_B_gt = self.real_B_gt.squeeze(1).permute(0, 3, 2, 1)
-        if test:
-            self.real_A_gt = input['A_gt'].to(self.device)
-            self.real_A_gt[self.real_A_gt > 0] = 1
-            self.real_A_gt[self.real_A_gt <= 0] = 0
-            self.real_A_gt = self.real_A_gt.squeeze(1).permute(0, 3, 2, 1)
+        self.real_A_gt = input['A_gt'].to(self.device).squeeze(-1)
+        self.real_B_gt = input['B_gt'].to(self.device).squeeze(-1)
 
-        self.real_A = self.real_A.squeeze(1).permute(0, 3, 2, 1)
-        self.real_B = self.real_B.squeeze(1).permute(0, 3, 2, 1)
-        self.real_RA = self.real_RA.squeeze(1).permute(0, 3, 2, 1)
-        self.real_RB = self.real_RB.squeeze(1).permute(0, 3, 2, 1)
+        # self.real_A = self.real_A.squeeze(1).permute(0, 3, 2, 1)
+        # self.real_B = self.real_B.squeeze(1).permute(0, 3, 2, 1)
+        # self.real_B_gt = self.real_B_gt.squeeze(1).permute(0, 3, 2, 1)
+        # self.real_RA = self.real_RA.squeeze(1).permute(0, 3, 2, 1)
+        # self.real_RB = self.real_RB.squeeze(1).permute(0, 3, 2, 1)
+
+        # self.real_B_gt = self.real_B_gt.reshape(-1, 1, self.opt.crop_size, self.opt.crop_size)
 
         self.image_paths = input['A_paths' if AtoB else 'B_paths']
 
@@ -312,6 +320,7 @@ class DCL3DModel(BaseModel):
         self.loss_Reg = 0.5 * (self.loss_Reg_A + self.loss_Reg_B)
 
         # segmentation loss
+        print(self.real_B_SEG.shape, self.real_B_gt.shape)
         self.loss_Seg = self.criterionSEG(torch.cat([self.real_B_SEG, self.fake_A_SEG], dim=0),
                                           torch.cat([self.real_B_gt, self.real_B_gt], dim=0)) * 5
 
@@ -376,12 +385,11 @@ class DCL3DModel(BaseModel):
 
     def val_metrics(self, epoch, train_dataloader, val_dataloader):
         self.netS_A.eval()
-        self.netS_B.eval()
 
-        dice_log = DiceMetric(include_background=False,
+        dice_log = DiceMetric(include_background=True,
                               reduction=MetricReduction.MEAN_BATCH,
                               get_not_nans=True)
-        IoU_log = MeanIoU(include_background=False,
+        IoU_log = MeanIoU(include_background=True,
                           reduction=MetricReduction.MEAN_BATCH,
                           get_not_nans=True)
         # train
@@ -390,21 +398,23 @@ class DCL3DModel(BaseModel):
         iou_train = AvgrageMeter()
         iou_train.reset()
 
+        post_sigmoid = Activations(sigmoid=True)
+        post_pred = AsDiscrete(argmax=False, logit_thresh=0.5)
+
         for i, data in enumerate(train_dataloader):
             self.set_input(data)
             # reset
             dice_log.reset()
             IoU_log.reset()
 
-            pred = torch.sigmoid(self.netS_B(self.real_B))
-            pred = torch.argmax(torch.cat([1 - pred, pred], dim=1), dim=1, keepdim=True)
+            pred = post_pred(post_sigmoid(self.netS_A(self.real_A)))
             # dice
-            dice_log(y_pred=pred, y=self.real_B_gt)
+            dice_log(y_pred=pred, y=self.real_A_gt)
             dice, not_nans = dice_log.aggregate()
             dice_train.update(dice.cpu().numpy(), n=not_nans.cpu().numpy())
 
             # iou
-            IoU_log(y_pred=pred, y=self.real_B_gt)
+            IoU_log(y_pred=pred, y=self.real_A_gt)
             iou, not_nans = IoU_log.aggregate()
             iou_train.update(iou.cpu().numpy(), n=not_nans.cpu().numpy())
 
@@ -415,13 +425,12 @@ class DCL3DModel(BaseModel):
         iou_val.reset()
 
         for i, data in enumerate(val_dataloader):
-            self.set_input(data, test=True)
+            self.set_input(data)
             # reset
             dice_log.reset()
             IoU_log.reset()
 
-            pred = torch.sigmoid(self.netS_A(self.real_A))
-            pred = torch.argmax(torch.cat([1 - pred, pred], dim=1), dim=1, keepdim=True)
+            pred = post_pred(post_sigmoid(self.netS_A(self.real_A)))
             # dice
             dice_log(y_pred=pred, y=self.real_A_gt)
             dice, not_nans = dice_log.aggregate()
@@ -436,7 +445,9 @@ class DCL3DModel(BaseModel):
         self.loss_IoU_train = np.nanmean(iou_train.avg)
         self.loss_Dice_val = np.nanmean(dice_val.avg)
         self.loss_IoU_val = np.nanmean(iou_val.avg)
-        print(f"EP: {epoch}, Train Dice: {self.loss_Dice_train}, Train IoU: {self.loss_IoU_train}, "
-              f"Val Dice: {self.loss_Dice_val}, Val IoU: {self.loss_IoU_val}")
+
+        print(f"EP: {epoch}, Train Dice: {self.loss_Dice_train:.4f} ({dice_train.avg}), "
+              f"Train IoU: {self.loss_IoU_train:.4f} ({iou_train.avg}), "
+              f"Val Dice: {self.loss_Dice_val:.4f} ({dice_val.avg}), "
+              f"Val IoU: {self.loss_IoU_val:.4f} ({iou_val.avg})")
         self.netS_A.train()
-        self.netS_B.train()

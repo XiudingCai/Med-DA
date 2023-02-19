@@ -1,39 +1,58 @@
 import os
+import shutil
+
 import ants
 import numpy as np
+from tqdm import tqdm
+from glob import glob
 import time
 
+root = "/home/cas/home_ez/Datasets/CT2MR_Reg"
+root_save = "/home/cas/home_ez/Datasets/CT2MR_Reg/original_TRSAA"
 
-for idx, img_name in enumerate(os.listdir('/mnt/z/CodingHere/GAN/DCLGAN-main/datasets/ct2mr/niiA')):
+# FIX_paths = glob(os.path.join(root, 'original_cat', 'CT', 'images', '*'))
+# MOV_paths = glob(os.path.join(root, 'original_cat', 'MR', 'images', '*'))
+FIX_paths = glob(os.path.join(root, 'original', 'CT', 'bones', '*'))
+MOV_paths = glob(os.path.join(root, 'original', 'MR', 'bones', '*'))
 
-    # img = cv2.imread(f'/mnt/z/CodingHere/GAN/DCLGAN-main/datasets/ct2mr/paired/{img_name}', 0)
-    #
-    # fixed_image = img[:, :512]
-    # moving_image = img[:, 512:]
-    #
-    # cv2.imwrite('a.png', fixed_image)
-    # cv2.imwrite('b.png', moving_image)
+MR_paths = glob(os.path.join(root, 'original', 'MR', 'images', '*'))
+MRb_paths = glob(os.path.join(root, 'original', 'MR', 'bones', '*'))
+MRt_paths = glob(os.path.join(root, 'original', 'MR', 'tumor', '*'))
 
-    fix_path = f'./niiA/{img_name}'
-    move_path = f'./niiB/{img_name}'
+transform = 'TRSAA'
 
-    types = ['Translation', 'Rigid', 'Similarity', 'QuickRigid', 'DenseRigid', 'BOLDRigid', 'Affine', 'AffineFast',
-             'BOLDAffine',
-             'TRSAA', 'ElasticSyN', 'SyN', 'SyNRA', 'SyNOnly', 'SyNCC', 'SyNabp', 'SyNBold', 'SyNBoldAff', 'SyNAggro',
-             'TVMSQ']
+for idx, (fix_path, mov_path) in tqdm(enumerate(zip(FIX_paths, MOV_paths))):
+    print(fix_path)
+    fix_img = ants.image_read(fix_path)
 
-    # 保存为png只支持unsigned char & unsigned short，因此读取时先进行数据类型转换
-    fix_img = ants.image_read(fix_path, pixeltype='unsigned char')
-    move_img = ants.image_read(move_path, pixeltype='unsigned char')
+    mov_img = ants.image_read(mov_path)
 
-    for t in types:
-        start = time.time()
+    if transform == 'TRSAA':
+        out = ants.registration(fixed=fix_img, moving=mov_img,
+                                type_of_transform='TRSAA', reg_iterations=(40, 20, 0))
+    else:
+        out = ants.registration(fixed=fix_img, moving=mov_img, type_of_transform='TRSAA')
 
-        out = ants.registration(fix_img, move_img, type_of_transform=t)
-        print(out)
-        reg_img = out['warpedmovout']  # 获取配准结果
+    # reg_img = out['warpedmovout']  # 获取配准结果
 
-        out_name = img_name.replace('.nii', f'_{t}.nii')
-        reg_img.to_file('niiB-reg/' + out_name)
+    def apply_t(x, label=False):
+        img_to_reg = ants.image_read(x)
 
-        print(t + ' : ', time.time() - start, '\n')
+        if label:
+            moving = ants.apply_transforms(fixed=fix_img, moving=img_to_reg,
+                                           transformlist=out['fwdtransforms'], interpolator='nearestNeighbor')
+        else:
+            moving = ants.apply_transforms(fixed=fix_img, moving=img_to_reg,
+                                           transformlist=out['fwdtransforms'])
+
+        save_path = x.replace('original', 'original_TRSAA')
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        ants.image_write(moving, save_path)
+
+    apply_t(MR_paths[idx])
+    apply_t(MRb_paths[idx])
+    apply_t(MRt_paths[idx], label=True)
+
+
+shutil.copytree(os.path.join(root, 'original', 'CT'),
+                os.path.join(root_save, 'CT'))
