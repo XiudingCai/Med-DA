@@ -40,7 +40,7 @@ class BaseOptions():
         parser.add_argument('--netG', type=str, default='resnet_9blocks', choices=['resnet_9blocks', 'resnet_6blocks', 'unet_256', 'unet_128', 'stylegan2', 'smallstylegan2', 'resnet_cat',
                                                                                    'lptn', 'hrt', 'hrt_2blocks', 'hrt_nb', 'spos', 'resvit',
                                                                                    'inred', 'hourglass', 'frequency',
-                                                                                   'swin', 'next',
+                                                                                   'swin',
                                                                                    'mposv1', 'VIP', 'former', 'hg_hrt',
                                                                                    'hrkormer', 'hrkormerv2', 'hrkormerv3', 'hrkormerv4', 'hrkormerv5'],
                             help='specify generator architecture')

@@ -10,9 +10,18 @@ if __name__ == '__main__':
     opt = TrainOptions().parse()   # get training options
     dataset = create_dataset(opt)  # create a dataset given opt.dataset_mode and other options
     dataset_size = len(dataset)    # get the number of images in the dataset.
+    print('The number of training images = %d' % dataset_size)
+
+    if opt.eval_metric:
+        mode = opt.phase
+        opt.phase = 'test'
+        val_dataset = create_dataset(opt)
+        val_dataset_size = len(val_dataset)  # get the number of images in the dataset.
+        print('The number of val images = %d' % val_dataset_size)
+
+        opt.phase = mode
 
     model = create_model(opt)      # create a model given opt.model and other options
-    print('The number of training images = %d' % dataset_size)
 
     visualizer = Visualizer(opt)   # create a visualizer that display/save images and plots
     opt.visualizer = visualizer
@@ -51,6 +60,9 @@ if __name__ == '__main__':
             if len(opt.gpu_ids) > 0:
                 torch.cuda.synchronize()
             optimize_time = (time.time() - optimize_start_time) / batch_size * 0.005 + 0.995 * optimize_time
+
+            if opt.eval_metric and total_iters % opt.eval_freq == 0:
+                model.val_metrics(epoch, dataset, val_dataset)
 
             if total_iters % opt.display_freq == 0:   # display images on visdom and save images to a HTML file
                 save_result = total_iters % opt.update_html_freq == 0

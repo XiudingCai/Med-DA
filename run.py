@@ -1209,6 +1209,28 @@ def MR2CT_Reg():
     # exp.eval(metric_list, testB=False)
 
 
+def BraTS19():
+    metric_list = ['psnr', 'ssim', 'multi_scale_ssim', 'haarpsi', 'vsi']
+    # metric_list = ['psnr', 'ssim', 'multi_scale_ssim', 'haarpsi', 'vsi', 'mdsi', 'gmsd', 'multi_scale_gmsd']
+    # metric_list += ['dists', 'lpips', 'pieapp']
+    # metric_list += ['mind', 'mutual_info']
+    # metric_list += ['total_variation', 'brisque']
+
+    # # ##############################  IXI  ############################### # #
+
+    # 1840 sec/epoch
+    exp = Experiment(dataset="BraTS19", model="tricycle", name="tricycle_ep5k", load_size=256, netG='resnet_9blocks',
+                     input_nc=1, output_nc=1, dataset_mode='unaligned4brats19', gpu_ids='0',
+                     dataroot="/home/cas/home_ez/Datasets",
+                     extra=" --num_K 0 --ngf 64")
+    exp.train(batch_size=4, n_epochs=2500, n_epochs_decay=2500, nce_idt=False, continue_train=True,
+              extra=" --save_latest_freq 5000 --display_freq 50"
+                    " --display_ncols 6 --eval_metric --eval_freq 200")  # --netD basic3d
+    # exp.test()
+    # # # exp.fid()
+    # exp.eval(metric_list, testB=False)
+
+
 def baseline():
     metric_list = ['psnr', 'ssim', 'multi_scale_ssim', 'haarpsi', 'vsi']
     # metric_list = ['psnr', 'ssim', 'multi_scale_ssim', 'haarpsi', 'vsi', 'mdsi', 'gmsd', 'multi_scale_gmsd']
@@ -3365,22 +3387,8 @@ def our_proposal_SR():
 def main():
     # main()
     # baseline_IXI()
-    MR2CT_Reg()
-    # baseline_cam()
-    # baseline_ct2mr()
-    # LPTN
-    # baseline_horse()
-    # DINTS()
-    # baseline_brats()
-    # dog2cat()
-    # hyper_pm()
-    # our_proposal()
-    # our_proposal_brats18()
-    # our_proposal_SR()
-    # greedy_search_cut()
-    # greedy_search()
-    # livecell()
-    # baseline_brats()
+    # MR2CT_Reg()
+    BraTS19()
 
 
 if __name__ == '__main__':

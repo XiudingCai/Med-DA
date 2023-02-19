@@ -15,7 +15,9 @@ from util.util import AvgrageMeter
 from monai.losses import DiceLoss
 from monai.transforms import Activations, AsDiscrete, Compose
 import numpy as np
-class DCL3DModel(BaseModel):
+
+
+class TriCycleModel(BaseModel):
     """ This class implements DCLGAN model.
     This code is inspired by CUT and CycleGAN.
     """
@@ -69,8 +71,8 @@ class DCL3DModel(BaseModel):
         # specify the training losses you want to print out.
         # The training/test scripts will call <BaseModel.get_current_losses>
         self.loss_names = ['D_A', 'G_A', 'NCE1', 'D_B', 'G_B', 'NCE2', 'G', 'Seg', 'Reg']
-        visual_names_A = ['real_A', 'real_A_SEG', 'fake_B', 'fake_B_SEG', 'fake_REG_B', 'real_RB']
-        visual_names_B = ['real_B', 'real_B_SEG', 'fake_A', 'fake_A_SEG', 'fake_REG_A', 'real_RA']
+        visual_names_A = ['real_A', 'real_A_SEG', 'fake_B', 'fake_B_SEG', 'rec_A', 'real_RB']
+        visual_names_B = ['real_B', 'real_B_SEG', 'fake_A', 'fake_A_SEG', 'rec_B', 'real_RA']
         self.nce_layers = [int(i) for i in self.opt.nce_layers.split(',')]
 
         if opt.nce_idt and self.isTrain:
@@ -89,7 +91,7 @@ class DCL3DModel(BaseModel):
         self.visual_names = visual_names_A + visual_names_B  # combine visualizations for A and B
 
         if self.isTrain:
-            self.model_names = ['G_A', 'F1', 'D_A', 'G_B', 'F2', 'D_B', 'S_A', 'S_B', 'R_A', 'R_B']
+            self.model_names = ['G_A', 'D_A', 'G_B', 'D_B', 'S_A', 'S_B', 'R_A', 'R_B']
         else:  # during test time, only load G
             self.model_names = ['G_A', 'G_B']
 
@@ -105,22 +107,27 @@ class DCL3DModel(BaseModel):
         #                              roi_size=(self.opt.patch_size[0], self.opt.patch_size[1], self.opt.patch_size[2]),
         #                              sw_batch_size=1, predictor=model, overlap=0.5)
 
-        self.netF1 = networks.define_F(opt.input_nc, opt.netF, opt.normG,
-                                       not opt.no_dropout, opt.init_type, opt.init_gain, opt.no_antialias, self.gpu_ids,
-                                       opt)
-        self.netF2 = networks.define_F(opt.input_nc, opt.netF, opt.normG,
-                                       not opt.no_dropout, opt.init_type, opt.init_gain, opt.no_antialias, self.gpu_ids,
-                                       opt)
+        # self.netF1 = networks.define_F(opt.input_nc, opt.netF, opt.normG,
+        #                                not opt.no_dropout, opt.init_type, opt.init_gain, opt.no_antialias, self.gpu_ids,
+        #                                opt)
+        # self.netF2 = networks.define_F(opt.input_nc, opt.netF, opt.normG,
+        #                                not opt.no_dropout, opt.init_type, opt.init_gain, opt.no_antialias, self.gpu_ids,
+        #                                opt)
         opt.input_nc = 1
         opt.num_classes = 3
-        self.netS_A = networks.define_G(opt.input_nc, opt.num_classes, opt.ngf, 'unet_256', opt.normG,
-                                        not opt.no_dropout,
-                                        opt.init_type, opt.init_gain, opt.no_antialias, opt.no_antialias_up,
-                                        self.gpu_ids, opt)
-        self.netS_B = networks.define_G(opt.input_nc, opt.num_classes, opt.ngf, 'unet_256', opt.normG,
-                                        not opt.no_dropout,
-                                        opt.init_type, opt.init_gain, opt.no_antialias, opt.no_antialias_up,
-                                        self.gpu_ids, opt)
+        # self.netS_A = networks.define_G(opt.input_nc, opt.num_classes, opt.ngf, 'unet_256', opt.normG,
+        #                                 not opt.no_dropout,
+        #                                 opt.init_type, opt.init_gain, opt.no_antialias, opt.no_antialias_up,
+        #                                 self.gpu_ids, opt)
+        # self.netS_B = networks.define_G(opt.input_nc, opt.num_classes, opt.ngf, 'unet_256', opt.normG,
+        #                                 not opt.no_dropout,
+        #                                 opt.init_type, opt.init_gain, opt.no_antialias, opt.no_antialias_up,
+        #                                 self.gpu_ids, opt)
+        import segmentation_models_pytorch as smp
+        self.netS_A = smp.Unet(encoder_name='resnet18', encoder_weights='imagenet',
+                               in_channels=opt.input_nc, classes=opt.num_classes).cuda()
+        self.netS_B = smp.Unet(encoder_name='resnet18', encoder_weights='imagenet',
+                               in_channels=opt.input_nc, classes=opt.num_classes).cuda()
 
         if self.isTrain:
             self.netD_A = networks.define_D(opt.output_nc, opt.ndf, opt.netD,
@@ -140,7 +147,7 @@ class DCL3DModel(BaseModel):
             # define loss functions
             self.criterionGAN = networks.GANLoss(opt.gan_mode).to(self.device)
             # self.criterionSEG = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor([10.])).to(self.device)
-            self.criterionSEG  = DiceLoss(to_onehot_y=False, sigmoid=True)
+            self.criterionSEG = DiceLoss(to_onehot_y=False, sigmoid=True)
 
             self.criterionNCE = []
 
@@ -148,6 +155,7 @@ class DCL3DModel(BaseModel):
                 self.criterionNCE.append(PatchNCELoss(opt).to(self.device))
 
             self.criterionIdt = torch.nn.L1Loss().to(self.device)
+            self.criterionCycle = torch.nn.L1Loss().to(self.device)
 
             self.optimizer_G = torch.optim.Adam(itertools.chain(self.netG_A.parameters(), self.netG_B.parameters()),
                                                 lr=opt.lr, betas=(opt.beta1, opt.beta2))
@@ -178,8 +186,8 @@ class DCL3DModel(BaseModel):
             self.compute_G_loss().backward()  # calculate graidents for G
             self.backward_D_A()  # calculate gradients for D_A
             self.backward_D_B()  # calculate graidents for D_B
-            self.optimizer_F = torch.optim.Adam(itertools.chain(self.netF1.parameters(), self.netF2.parameters()))
-            self.optimizers.append(self.optimizer_F)
+            # self.optimizer_F = torch.optim.Adam(itertools.chain(self.netF1.parameters(), self.netF2.parameters()))
+            # self.optimizers.append(self.optimizer_F)
 
     def optimize_parameters(self):
         # forward
@@ -197,15 +205,15 @@ class DCL3DModel(BaseModel):
         self.optimizer_G.zero_grad()
         self.optimizer_S.zero_grad()
         self.optimizer_R.zero_grad()
-        if self.opt.netF == 'mlp_sample':
-            self.optimizer_F.zero_grad()
+        # if self.opt.netF == 'mlp_sample':
+        #     self.optimizer_F.zero_grad()
         self.loss_G = self.compute_G_loss()
         self.loss_G.backward()
         self.optimizer_G.step()
         self.optimizer_S.step()
         self.optimizer_R.step()
-        if self.opt.netF == 'mlp_sample':
-            self.optimizer_F.step()
+        # if self.opt.netF == 'mlp_sample':
+        #     self.optimizer_F.step()
 
     def set_input(self, input):
         """Unpack input data from the dataloader and perform necessary pre-processing steps.
@@ -235,18 +243,22 @@ class DCL3DModel(BaseModel):
 
     def forward(self):
         """Run forward pass; called by both functions <optimize_parameters> and <test>."""
-        self.fake_B = self.netG_A(self.real_A)  # G_A(A)
-        self.fake_A = self.netG_B(self.real_B)  # G_B(B)
+        self.fake_B = self.netG_A(self.real_A)
+        self.fake_A = self.netG_B(self.real_B)
+        self.rec_B = self.netG_A(self.fake_A)
+        self.rec_A = self.netG_B(self.fake_B)
 
         if self.opt.nce_idt:
             self.idt_A = self.netG_A(self.real_B)
             self.idt_B = self.netG_B(self.real_A)
 
         # segmentation
+        # self.set_requires_grad([self.netS_A, self.netS_B], False)
         self.fake_A_SEG = self.netS_A(self.fake_A)
-        self.real_A_SEG = self.netS_A(self.real_A)
-
         self.fake_B_SEG = self.netS_B(self.fake_B)
+        # self.set_requires_grad([self.netS_A, self.netS_B], True)
+
+        self.real_A_SEG = self.netS_A(self.real_A)
         self.real_B_SEG = self.netS_B(self.real_B)
 
     def backward_D_basic(self, netD, real, fake):
@@ -297,12 +309,15 @@ class DCL3DModel(BaseModel):
 
         # maintain content
         if self.opt.lambda_NCE > 0.0:
-            self.loss_NCE1 = self.calculate_NCE_loss1(self.real_A, self.fake_B) * self.opt.lambda_NCE
-            self.loss_NCE2 = self.calculate_NCE_loss2(self.real_B, self.fake_A) * self.opt.lambda_NCE
-        else:
-            self.loss_NCE1, self.loss_NCE_bd, self.loss_NCE2 = 0.0, 0.0, 0.0
+            # self.loss_NCE1 = self.calculate_NCE_loss1(self.real_A, self.fake_B) * self.opt.lambda_NCE
+            # self.loss_NCE2 = self.calculate_NCE_loss2(self.real_B, self.fake_A) * self.opt.lambda_NCE
+            self.loss_NCE1 = self.criterionCycle(self.rec_A, self.real_A) * self.opt.lambda_A
+            self.loss_NCE2 = self.criterionCycle(self.rec_B, self.real_B) * self.opt.lambda_B
 
-        if self.opt.lambda_NCE > 0.0:
+        else:
+            self.loss_NCE1, self.loss_NCE2 = 0.0, 0.0
+
+        if self.opt.nce_idt:
             # L1 IDENTICAL Loss
             self.loss_idt_A = self.criterionIdt(self.idt_A, self.real_B) * self.opt.lambda_IDT
             self.loss_idt_B = self.criterionIdt(self.idt_B, self.real_A) * self.opt.lambda_IDT
@@ -320,7 +335,6 @@ class DCL3DModel(BaseModel):
         self.loss_Reg = 0.5 * (self.loss_Reg_A + self.loss_Reg_B)
 
         # segmentation loss
-        print(self.real_B_SEG.shape, self.real_B_gt.shape)
         self.loss_Seg = self.criterionSEG(torch.cat([self.real_B_SEG, self.fake_A_SEG], dim=0),
                                           torch.cat([self.real_B_gt, self.real_B_gt], dim=0)) * 5
 
@@ -407,14 +421,14 @@ class DCL3DModel(BaseModel):
             dice_log.reset()
             IoU_log.reset()
 
-            pred = post_pred(post_sigmoid(self.netS_A(self.real_A)))
+            pred = post_pred(post_sigmoid(self.netS_B(self.real_B)))
             # dice
-            dice_log(y_pred=pred, y=self.real_A_gt)
+            dice_log(y_pred=pred, y=self.real_B_gt)
             dice, not_nans = dice_log.aggregate()
             dice_train.update(dice.cpu().numpy(), n=not_nans.cpu().numpy())
 
             # iou
-            IoU_log(y_pred=pred, y=self.real_A_gt)
+            IoU_log(y_pred=pred, y=self.real_B_gt)
             iou, not_nans = IoU_log.aggregate()
             iou_train.update(iou.cpu().numpy(), n=not_nans.cpu().numpy())
 
