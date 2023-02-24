@@ -331,7 +331,7 @@ class Pix2Pix:
             " --crop_size 256",
             f" --input_nc {self.input_nc} --output_nc {self.output_nc}",
 
-            " --num_threads 0",
+            " --num_threads 8",
             " --continue_train" if continue_train else "",
             # f" --lambda_identity {lambda_identity}",
             # " --netG unet_256",
@@ -574,7 +574,7 @@ class CycleGAN:
             " --crop_size 256",
             f" --input_nc {self.input_nc} --output_nc {self.output_nc}",
 
-            " --num_threads 0",
+            " --num_threads 8",
             " --continue_train" if continue_train else "",
             # f" --lambda_identity {lambda_identity}",
             # " --netG unet_256",
@@ -817,7 +817,7 @@ class Experiment:
             f" --load_size {self.load_size}",
             " --crop_size 256",
 
-            " --num_threads 0",
+            " --num_threads 8",
             " --continue_train" if continue_train else "",
             # f" --lambda_identity {lambda_identity}",
             # " --netG unet_256",
@@ -1219,14 +1219,32 @@ def BraTS19():
     # # ##############################  IXI  ############################### # #
 
     # 1840 sec/epoch
+    exp = Experiment(dataset="BraTS19", model="dcl3dv2", name="dcl3dv2_ep3k", load_size=256, netG='resnet_9blocks',
+                     input_nc=1, output_nc=1, dataset_mode='unaligned4brats19', gpu_ids='0',
+                     dataroot="/home/cas/home_ez/Datasets",
+                     extra=" --num_K 0 --ngf 64")
+    # exp.train(batch_size=2, n_epochs=1500, n_epochs_decay=1500, nce_idt=True, continue_train=False,
+    #           extra=" --save_latest_freq 5000 --display_freq 50"
+    #                 " --display_ncols 6 --eval_metric --eval_freq 200")  # --netD basic3d
+
+    # 1840 sec/epoch
+    exp = Experiment(dataset="original_TRSAA_crop", model="dcl3dv2", name="dcl3dv2_ep3k", load_size=256, netG='resnet_9blocks',
+                     input_nc=1, output_nc=1, dataset_mode='unalignedslices4seg176x2', gpu_ids='0',
+                     dataroot="/home/cas/home_ez/Datasets/CT2MR_Reg",
+                     extra=" --num_K 0 --ngf 64")
+    # exp.train(batch_size=2, n_epochs=1500, n_epochs_decay=1500, nce_idt=True, continue_train=False,
+    #           extra=" --save_latest_freq 5000 --display_freq 50"
+    #                 " --display_ncols 6 --eval_metric --eval_freq 200")  # --netD basic3d
+
+    # 1840 sec/epoch
     exp = Experiment(dataset="original_TRSAA_crop", model="dcl3d", name="dcl3d_ep2k", load_size=256, netG='resnet_9blocks',
                      input_nc=1, output_nc=1, dataset_mode='unalignedslices4seg176x2', gpu_ids='0',
                      dataroot="/home/cas/home_ez/Datasets/CT2MR_Reg",
                      extra=" --num_K 0 --ngf 64")
-    exp.train(batch_size=2, n_epochs=1000, n_epochs_decay=1000, nce_idt=True, continue_train=True,
-              extra=" --save_latest_freq 5000 --display_freq 50"
-                    " --display_ncols 7 --eval_metric --eval_freq 200")  # --netD basic3d
-    # exp.test()
+    # exp.train(batch_size=2, n_epochs=1000, n_epochs_decay=1000, nce_idt=True, continue_train=True,
+    #           extra=" --save_latest_freq 5000 --display_freq 50"
+    #                 " --display_ncols 7 --eval_metric --eval_freq 200")  # --netD basic3d
+    exp.test()
     # # # exp.fid()
     # exp.eval(metric_list, testB=False)
 
