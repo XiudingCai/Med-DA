@@ -214,11 +214,35 @@ def get_transform(opt, keys=['image'], label=False):
             transforms.ToTensord(keys=keys),
         ]
     )
+    test_transform = transforms.Compose(
+        [
+            transforms.LoadImaged(keys=keys),
+            transforms.EnsureChannelFirstd(keys=keys),
+            # transforms.Orientationd(keys=keys,
+            #                         axcodes="RAS"),
+            # transforms.Spacingd(keys=keys,
+            #                     pixdim=(opt.patch_size[0], opt.patch_size[1], opt.patch_size[2]),
+            #                     mode=("bilinear",)),  # both images
+            # transforms.ScaleIntensityRanged(keys=keys,
+            #                                 a_min=0,
+            #                                 a_max=1000,
+            #                                 b_min=-1.,
+            #                                 b_max=1.,
+            #                                 clip=True),
+            ScaleMinMaxNorm(keys=keys[:-1], a_min=MIN, a_max=MAX),
+            transforms.CenterSpatialCropd(keys=keys, roi_size=(176, 176, -1), ),
+            transforms.Resized(keys=keys, spatial_size=(256, 256, -1), mode=mode),
+            transforms.Rotate90d(keys=keys, k=2, spatial_axes=(0, 1)),
+            transforms.ToTensord(keys=keys),
+        ]
+    )
 
     if opt.isTrain:
         return train_transform
-    else:
+    elif opt.phase == 'val':
         return val_transform
+    else:
+        return test_transform
 
 
 from monai.transforms.transform import MapTransform

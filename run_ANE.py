@@ -839,10 +839,10 @@ class Experiment:
         print(sh)
         os.system(sh)
 
-    def test(self, script='test_3d', num_test=500, extra=''):
+    def test(self, script='test_3d', num_test=500, phase='test', extra=''):
         # test
         # sh = "python test.py --dataroot datasets/horse2zebra/testA --name horse2zebra_pretrained --model test --no_dropout"
-        sh = f"python {script}.py --name {self.dataset}_{self.name} --phase test --no_dropout"
+        sh = f"python {script}.py --name {self.dataset}_{self.name} --phase {phase} --no_dropout"
         #
         paras = [
             f" --dataset_mode {self.dataset_mode}",
@@ -1244,7 +1244,7 @@ def BraTS19():
     # exp.train(batch_size=2, n_epochs=1000, n_epochs_decay=1000, nce_idt=True, continue_train=True,
     #           extra=" --save_latest_freq 5000 --display_freq 50"
     #                 " --display_ncols 7 --eval_metric --eval_freq 200")  # --netD basic3d
-    exp.test()
+    exp.test(phase='train')
     # # # exp.fid()
     # exp.eval(metric_list, testB=False)
 
