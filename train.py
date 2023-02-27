@@ -14,12 +14,15 @@ if __name__ == '__main__':
 
     if opt.eval_metric:
         mode = opt.phase
+        batch_size = opt.batch_size
         opt.phase = 'test'
+        opt.batch_size = 1
         val_dataset = create_dataset(opt)
         val_dataset_size = len(val_dataset)  # get the number of images in the dataset.
         print('The number of val images = %d' % val_dataset_size)
 
         opt.phase = mode
+        opt.batch_size = batch_size
 
     model = create_model(opt)      # create a model given opt.model and other options
 

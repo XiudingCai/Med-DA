@@ -11,16 +11,18 @@ from monai.utils.enums import MetricReduction
 from .RegGAN import Reg
 from .networks import init_net, Upsample2
 
-from util.util import AvgrageMeter
-import numpy as np
 import os
 from functools import partial
 
 import SimpleITK as sitk
 from monai.inferers import sliding_window_inference
+from util.util import AvgrageMeter
+from monai.losses import DiceLoss
+from monai.transforms import Activations, AsDiscrete, Compose
+import numpy as np
 
 
-class DCL3DModel(BaseModel):
+class DCL3D19Model(BaseModel):
     """ This class implements DCLGAN model.
     This code is inspired by CUT and CycleGAN.
     """
@@ -82,7 +84,7 @@ class DCL3DModel(BaseModel):
             visual_names_B.append('idt_A')
 
         visual_names_B.append('real_B_gt')
-        self.loss_names += ['Dice_train', 'IoU_train', 'Dice_val', 'IoU_val']
+        self.loss_names += ['Dice_train', 'Dice_val', 'IoU_train', 'IoU_val']
 
         self.loss_Dice_train = 0
         self.loss_IoU_train = 0
@@ -110,12 +112,18 @@ class DCL3DModel(BaseModel):
                                        not opt.no_dropout, opt.init_type, opt.init_gain, opt.no_antialias, self.gpu_ids,
                                        opt)
         opt.input_nc = 1
-        self.netS_A = networks.define_G(opt.input_nc, opt.input_nc, opt.ngf, 'unet_256', opt.normG, not opt.no_dropout,
-                                        opt.init_type, opt.init_gain, opt.no_antialias, opt.no_antialias_up,
-                                        self.gpu_ids, opt)
-        self.netS_B = networks.define_G(opt.input_nc, opt.input_nc, opt.ngf, 'unet_256', opt.normG, not opt.no_dropout,
-                                        opt.init_type, opt.init_gain, opt.no_antialias, opt.no_antialias_up,
-                                        self.gpu_ids, opt)
+        opt.num_classes = 3
+        # self.netS_A = networks.define_G(opt.input_nc, opt.input_nc, opt.ngf, 'unet_256', opt.normG, not opt.no_dropout,
+        #                                 opt.init_type, opt.init_gain, opt.no_antialias, opt.no_antialias_up,
+        #                                 self.gpu_ids, opt)
+        # self.netS_B = networks.define_G(opt.input_nc, opt.input_nc, opt.ngf, 'unet_256', opt.normG, not opt.no_dropout,
+        #                                 opt.init_type, opt.init_gain, opt.no_antialias, opt.no_antialias_up,
+        #                                 self.gpu_ids, opt)
+        import segmentation_models_pytorch as smp
+        self.netS_A = smp.Unet(encoder_name='resnet18', encoder_weights='imagenet',
+                               in_channels=opt.input_nc, classes=opt.num_classes).cuda()
+        self.netS_B = smp.Unet(encoder_name='resnet18', encoder_weights='imagenet',
+                               in_channels=opt.input_nc, classes=opt.num_classes).cuda()
 
         if self.isTrain:
             self.netD_A = networks.define_D(opt.output_nc, opt.ndf, opt.netD,
@@ -134,7 +142,7 @@ class DCL3DModel(BaseModel):
             self.fake_B_pool = ImagePool(opt.pool_size)  # create image buffer to store previously generated images
             # define loss functions
             self.criterionGAN = networks.GANLoss(opt.gan_mode).to(self.device)
-            self.criterionSEG = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor([10.])).to(self.device)
+            self.criterionSEG = DiceLoss(to_onehot_y=False, sigmoid=True)
 
             self.criterionNCE = []
 
@@ -214,26 +222,18 @@ class DCL3DModel(BaseModel):
         self.real_RA = input['RA' if AtoB else 'RB'].to(self.device)
         self.real_RB = input['RB' if AtoB else 'RA'].to(self.device)
 
+        self.real_A_gt = input['A_gt'].to(self.device)
         self.real_B_gt = input['B_gt'].to(self.device)
-        self.real_B_gt[self.real_B_gt > 0] = 1
-        self.real_B_gt[self.real_B_gt <= 0] = 0
-        self.real_B_gt = self.real_B_gt.squeeze(1).permute(0, 3, 2, 1)
-        if test:
-            self.real_A_gt = input['A_gt'].to(self.device)
-            self.real_A_gt[self.real_A_gt > 0] = 1
-            self.real_A_gt[self.real_A_gt <= 0] = 0
-            self.real_A_gt = self.real_A_gt.squeeze(1).permute(0, 3, 2, 1)
-
 
         if self.opt.isTrain:
-            self.real_A = self.real_A.squeeze(1).permute(0, 3, 2, 1)
-            self.real_B = self.real_B.squeeze(1).permute(0, 3, 2, 1)
-            self.real_RA = self.real_RA.squeeze(1).permute(0, 3, 2, 1)
-            self.real_RB = self.real_RB.squeeze(1).permute(0, 3, 2, 1)
-        else:
-            self.real_A_gt = input['A_gt'].to(self.device)
-            self.real_B_gt = input['B_gt'].to(self.device)
+            self.real_A = self.real_A.squeeze(-1)
+            self.real_B = self.real_B.squeeze(-1)
+            self.real_RA = self.real_RA.squeeze(-1)
+            self.real_RB = self.real_RB.squeeze(-1)
 
+            self.real_A_gt = self.real_A_gt.squeeze(-1)
+            self.real_B_gt = self.real_B_gt.squeeze(-1)
+        else:
             self.image_meta = input['A_meta' if AtoB else 'B_meta']
 
         self.image_paths = input['A_paths' if AtoB else 'B_paths']
@@ -244,40 +244,36 @@ class DCL3DModel(BaseModel):
         This function wraps <forward> function in no_grad() so we don't save intermediate steps for backprop
         It also calls <compute_visuals> to produce additional visualization results
         """
-        AtoB = self.opt.phase == 'test'
-
-        model = self.netG_A if AtoB else self.netG_B
-        real_A = self.real_A if AtoB else self.real_B
-        real_B = self.real_B if AtoB else self.real_A
-        real_A_gt = self.real_A_gt if AtoB else self.real_B_gt
-
+        model = self.netG_A
+        real_A = self.real_A
+        real_B = self.real_B
+        real_A_gt = self.real_A_gt
+        real_B_gt = self.real_B_gt
         self.opt.patch_size = (256, 256, 1)
         model_inferer = partial(sliding_window_inference,
                                 roi_size=(self.opt.patch_size[0], self.opt.patch_size[1], self.opt.patch_size[2]),
                                 sw_batch_size=1, predictor=model, overlap=0.5)
 
         with torch.no_grad():
-            print(real_A.shape)
+            # print(real_A.shape)
             fake_B = model_inferer(real_A)
-            # print(fake_B.shape, real_A_gt.shape)
+            print(fake_B.shape)
 
             real_A_list = [torch.rot90(real_A.squeeze(1).transpose(1, 3), k=2, dims=(2, 3))]
             real_B_list = [torch.rot90(real_B.squeeze(1).transpose(1, 3), k=2, dims=(2, 3))]
             fake_B_list = [torch.rot90(fake_B.squeeze(1).transpose(1, 3), k=2, dims=(2, 3))]
 
             real_A_gt_list = [torch.rot90(real_A_gt.squeeze(1).transpose(1, 3), k=2, dims=(2, 3))]
+            real_B_gt_list = [torch.rot90(real_B_gt.squeeze(1).transpose(1, 3), k=2, dims=(2, 3))]
 
         img_paths = self.get_image_paths()
 
         save_dir = os.path.join(self.opt.results_dir, self.opt.name, f'{self.opt.phase}_{self.opt.epoch}', 'images')
 
-        real_A_path = 'testA' if AtoB else 'trainB'
-        real_A_gt_path = 'testA_gt' if AtoB else 'trainB_gt'
-        fake_B_path = 'testB' if AtoB else 'trainA'
-
-        os.makedirs(os.path.join(save_dir, real_A_path), exist_ok=True)
-        os.makedirs(os.path.join(save_dir, real_A_gt_path), exist_ok=True)
-        os.makedirs(os.path.join(save_dir, fake_B_path), exist_ok=True)
+        os.makedirs(os.path.join(save_dir, 'real_A'), exist_ok=True)
+        os.makedirs(os.path.join(save_dir, 'real_A_gt'), exist_ok=True)
+        os.makedirs(os.path.join(save_dir, 'real_B_gt'), exist_ok=True)
+        os.makedirs(os.path.join(save_dir, 'fake_B'), exist_ok=True)
         os.makedirs(os.path.join(save_dir, 'real_B'), exist_ok=True)
 
         for i in range(len(img_paths)):
@@ -292,6 +288,7 @@ class DCL3DModel(BaseModel):
             fake = (fake - fake.min()) / (fake.max() - fake.min()) * 1000
 
             label_a = real_A_gt_list[i][0]
+            label_b = real_B_gt_list[i][0]
             # fake = (fake + 1) / 2 * 1000
             # real = (real + 1) / 2 * 1000
 
@@ -299,13 +296,13 @@ class DCL3DModel(BaseModel):
             nii.SetOrigin([x.item() for x in self.image_meta['origin']])
             nii.SetSpacing([x.item() for x in self.image_meta['spacing']])
             nii.SetDirection([x.item() for x in self.image_meta['direction']])
-            sitk.WriteImage(nii, os.path.join(save_dir, fake_B_path, name))
+            sitk.WriteImage(nii, os.path.join(save_dir, 'fake_B', name))
 
             nii = sitk.GetImageFromArray(real.cpu().numpy().astype('int'))
             nii.SetOrigin([x.item() for x in self.image_meta['origin']])
             nii.SetSpacing([x.item() for x in self.image_meta['spacing']])
             nii.SetDirection([x.item() for x in self.image_meta['direction']])
-            sitk.WriteImage(nii, os.path.join(save_dir, real_A_path, name))
+            sitk.WriteImage(nii, os.path.join(save_dir, 'real_A', name))
 
             nii = sitk.GetImageFromArray(real_B.cpu().numpy().astype('int'))
             nii.SetOrigin([x.item() for x in self.image_meta['origin']])
@@ -317,7 +314,13 @@ class DCL3DModel(BaseModel):
             nii.SetOrigin([x.item() for x in self.image_meta['origin']])
             nii.SetSpacing([x.item() for x in self.image_meta['spacing']])
             nii.SetDirection([x.item() for x in self.image_meta['direction']])
-            sitk.WriteImage(nii, os.path.join(save_dir, real_A_gt_path, name))
+            sitk.WriteImage(nii, os.path.join(save_dir, 'real_A_gt', name))
+
+            nii = sitk.GetImageFromArray(label_b.cpu().numpy().astype('int'))
+            nii.SetOrigin([x.item() for x in self.image_meta['origin']])
+            nii.SetSpacing([x.item() for x in self.image_meta['spacing']])
+            nii.SetDirection([x.item() for x in self.image_meta['direction']])
+            sitk.WriteImage(nii, os.path.join(save_dir, 'real_B_gt', name))
 
     def forward(self):
         """Run forward pass; called by both functions <optimize_parameters> and <test>."""
@@ -484,14 +487,16 @@ class DCL3DModel(BaseModel):
         iou_train = AvgrageMeter()
         iou_train.reset()
 
+        post_sigmoid = Activations(sigmoid=True)
+        post_pred = AsDiscrete(argmax=False, logit_thresh=0.5)
+
         for i, data in enumerate(train_dataloader):
             self.set_input(data)
             # reset
             dice_log.reset()
             IoU_log.reset()
 
-            pred = torch.sigmoid(self.netS_B(self.real_B))
-            pred = torch.argmax(torch.cat([1 - pred, pred], dim=1), dim=1, keepdim=True)
+            pred = post_pred(post_sigmoid(self.netS_B(self.real_B)))
             # dice
             dice_log(y_pred=pred, y=self.real_B_gt)
             dice, not_nans = dice_log.aggregate()
@@ -509,13 +514,12 @@ class DCL3DModel(BaseModel):
         iou_val.reset()
 
         for i, data in enumerate(val_dataloader):
-            self.set_input(data, test=True)
+            self.set_input(data)
             # reset
             dice_log.reset()
             IoU_log.reset()
 
-            pred = torch.sigmoid(self.netS_A(self.real_A))
-            pred = torch.argmax(torch.cat([1 - pred, pred], dim=1), dim=1, keepdim=True)
+            pred = post_pred(post_sigmoid(self.netS_A(self.real_A)))
             # dice
             dice_log(y_pred=pred, y=self.real_A_gt)
             dice, not_nans = dice_log.aggregate()
@@ -530,7 +534,10 @@ class DCL3DModel(BaseModel):
         self.loss_IoU_train = np.nanmean(iou_train.avg)
         self.loss_Dice_val = np.nanmean(dice_val.avg)
         self.loss_IoU_val = np.nanmean(iou_val.avg)
-        print(f"EP: {epoch}, Train Dice: {self.loss_Dice_train}, Train IoU: {self.loss_IoU_train}, "
-              f"Val Dice: {self.loss_Dice_val}, Val IoU: {self.loss_IoU_val}")
+
+        print(f"EP: {epoch}, Train Dice: {self.loss_Dice_train:.4f} ({dice_train.avg}), "
+              f"Train IoU: {self.loss_IoU_train:.4f} ({iou_train.avg}), "
+              f"Val Dice: {self.loss_Dice_val:.4f} ({dice_val.avg}), "
+              f"Val IoU: {self.loss_IoU_val:.4f} ({iou_val.avg})")
         self.netS_A.train()
         self.netS_B.train()

@@ -18,9 +18,11 @@ from functools import partial
 
 import SimpleITK as sitk
 from monai.inferers import sliding_window_inference
+from monai.losses import DiceLoss
+from monai.transforms import Activations, AsDiscrete, Compose
 
 
-class DCL3DModel(BaseModel):
+class DCL3DV2Model(BaseModel):
     """ This class implements DCLGAN model.
     This code is inspired by CUT and CycleGAN.
     """
@@ -232,7 +234,6 @@ class DCL3DModel(BaseModel):
             self.real_RB = self.real_RB.squeeze(1).permute(0, 3, 2, 1)
         else:
             self.real_A_gt = input['A_gt'].to(self.device)
-            self.real_B_gt = input['B_gt'].to(self.device)
 
             self.image_meta = input['A_meta' if AtoB else 'B_meta']
 
@@ -244,40 +245,36 @@ class DCL3DModel(BaseModel):
         This function wraps <forward> function in no_grad() so we don't save intermediate steps for backprop
         It also calls <compute_visuals> to produce additional visualization results
         """
-        AtoB = self.opt.phase == 'test'
-
-        model = self.netG_A if AtoB else self.netG_B
-        real_A = self.real_A if AtoB else self.real_B
-        real_B = self.real_B if AtoB else self.real_A
-        real_A_gt = self.real_A_gt if AtoB else self.real_B_gt
-
+        model = self.netG_A
+        real_A = self.real_A
+        real_B = self.real_B
+        real_A_gt = self.real_A_gt
+        real_B_gt = self.real_B_gt
         self.opt.patch_size = (256, 256, 1)
         model_inferer = partial(sliding_window_inference,
                                 roi_size=(self.opt.patch_size[0], self.opt.patch_size[1], self.opt.patch_size[2]),
                                 sw_batch_size=1, predictor=model, overlap=0.5)
 
         with torch.no_grad():
-            print(real_A.shape)
+            # print(real_A.shape)
             fake_B = model_inferer(real_A)
-            # print(fake_B.shape, real_A_gt.shape)
+            print(fake_B.shape)
 
             real_A_list = [torch.rot90(real_A.squeeze(1).transpose(1, 3), k=2, dims=(2, 3))]
             real_B_list = [torch.rot90(real_B.squeeze(1).transpose(1, 3), k=2, dims=(2, 3))]
             fake_B_list = [torch.rot90(fake_B.squeeze(1).transpose(1, 3), k=2, dims=(2, 3))]
 
             real_A_gt_list = [torch.rot90(real_A_gt.squeeze(1).transpose(1, 3), k=2, dims=(2, 3))]
+            real_B_gt_list = [torch.rot90(real_B_gt.squeeze(1).transpose(1, 3), k=2, dims=(2, 3))]
 
         img_paths = self.get_image_paths()
 
         save_dir = os.path.join(self.opt.results_dir, self.opt.name, f'{self.opt.phase}_{self.opt.epoch}', 'images')
 
-        real_A_path = 'testA' if AtoB else 'trainB'
-        real_A_gt_path = 'testA_gt' if AtoB else 'trainB_gt'
-        fake_B_path = 'testB' if AtoB else 'trainA'
-
-        os.makedirs(os.path.join(save_dir, real_A_path), exist_ok=True)
-        os.makedirs(os.path.join(save_dir, real_A_gt_path), exist_ok=True)
-        os.makedirs(os.path.join(save_dir, fake_B_path), exist_ok=True)
+        os.makedirs(os.path.join(save_dir, 'real_A'), exist_ok=True)
+        os.makedirs(os.path.join(save_dir, 'real_A_gt'), exist_ok=True)
+        os.makedirs(os.path.join(save_dir, 'real_B_gt'), exist_ok=True)
+        os.makedirs(os.path.join(save_dir, 'fake_B'), exist_ok=True)
         os.makedirs(os.path.join(save_dir, 'real_B'), exist_ok=True)
 
         for i in range(len(img_paths)):
@@ -292,6 +289,7 @@ class DCL3DModel(BaseModel):
             fake = (fake - fake.min()) / (fake.max() - fake.min()) * 1000
 
             label_a = real_A_gt_list[i][0]
+            label_b = real_B_gt_list[i][0]
             # fake = (fake + 1) / 2 * 1000
             # real = (real + 1) / 2 * 1000
 
@@ -299,13 +297,13 @@ class DCL3DModel(BaseModel):
             nii.SetOrigin([x.item() for x in self.image_meta['origin']])
             nii.SetSpacing([x.item() for x in self.image_meta['spacing']])
             nii.SetDirection([x.item() for x in self.image_meta['direction']])
-            sitk.WriteImage(nii, os.path.join(save_dir, fake_B_path, name))
+            sitk.WriteImage(nii, os.path.join(save_dir, 'fake_B', name))
 
             nii = sitk.GetImageFromArray(real.cpu().numpy().astype('int'))
             nii.SetOrigin([x.item() for x in self.image_meta['origin']])
             nii.SetSpacing([x.item() for x in self.image_meta['spacing']])
             nii.SetDirection([x.item() for x in self.image_meta['direction']])
-            sitk.WriteImage(nii, os.path.join(save_dir, real_A_path, name))
+            sitk.WriteImage(nii, os.path.join(save_dir, 'real_A', name))
 
             nii = sitk.GetImageFromArray(real_B.cpu().numpy().astype('int'))
             nii.SetOrigin([x.item() for x in self.image_meta['origin']])
@@ -317,7 +315,13 @@ class DCL3DModel(BaseModel):
             nii.SetOrigin([x.item() for x in self.image_meta['origin']])
             nii.SetSpacing([x.item() for x in self.image_meta['spacing']])
             nii.SetDirection([x.item() for x in self.image_meta['direction']])
-            sitk.WriteImage(nii, os.path.join(save_dir, real_A_gt_path, name))
+            sitk.WriteImage(nii, os.path.join(save_dir, 'real_A_gt', name))
+
+            nii = sitk.GetImageFromArray(label_b.cpu().numpy().astype('int'))
+            nii.SetOrigin([x.item() for x in self.image_meta['origin']])
+            nii.SetSpacing([x.item() for x in self.image_meta['spacing']])
+            nii.SetDirection([x.item() for x in self.image_meta['direction']])
+            sitk.WriteImage(nii, os.path.join(save_dir, 'real_B_gt', name))
 
     def forward(self):
         """Run forward pass; called by both functions <optimize_parameters> and <test>."""

@@ -14,7 +14,7 @@ from glob import glob
 from sklearn.model_selection import train_test_split
 
 
-class UnalignedSlices4Seg176X2Dataset(BaseDataset):
+class MMSegDataset(BaseDataset):
     """
     This dataset class can load unaligned/unpaired datasets.
 
@@ -77,13 +77,12 @@ class UnalignedSlices4Seg176X2Dataset(BaseDataset):
             index_B = index % self.B_size
         else:  # randomize the index for domain B to avoid fixed pairs.
             index_B = random.randint(0, self.B_size - 1)
+
+        index_B = index_A
         B_path = self.B_paths[index_B]
 
         B_gt_path = self.B_gt_paths[index_B]  # make sure index is within then range
-        if self.opt.phase == "test":
-            A_gt_path = self.A_gt_paths[index_A]  # make sure index is within then range
-        else:
-            A_gt_path = A_path  # just as placeholder
+        A_gt_path = self.A_gt_paths[index_A]  # make sure index is within then range
 
         RA_path = self.A_paths[index_B]
         RB_path = self.B_paths[index_A]
@@ -99,17 +98,15 @@ class UnalignedSlices4Seg176X2Dataset(BaseDataset):
         direction_B = B_img.GetDirection()
 
         is_finetuning = self.opt.isTrain and self.current_epoch > self.opt.n_epochs
-        modified_opt = util.copyconf(self.opt, load_size=self.opt.crop_size if is_finetuning else self.opt.load_size)
-
-        transform_A = get_transform(modified_opt, keys=['image_A', 'image_RB', 'image_A_gt'], label=True)
-        transform_B = get_transform(modified_opt, keys=['image_B', 'image_RA', 'image_B_gt'], label=True)
+        modified_opt = util.copyconf(self.opt, load_size=self.opt.crop_size if is_finetuning else self.opt.load_size,
+                                     phase=self.phase)
+        transform_A = get_transform(modified_opt, keys=['image_A', 'image_B', 'image_A_gt'], label=True)
 
         # print(A_path, R_path)
-        dataA = transform_A({'image_A': A_path, 'image_RB': RB_path, 'image_A_gt': A_gt_path})
-        dataB = transform_B({'image_B': B_path, 'image_RA': RA_path, 'image_B_gt': B_gt_path})
-
-        return {'A': dataA['image_A'], 'A_gt': dataA['image_A_gt'], 'RB': dataA['image_RB'],
-                'B': dataB['image_B'], 'B_gt': dataB['image_B_gt'], 'RA': dataB['image_RA'],
+        dataA = transform_A({'image_A': A_path, 'image_B': B_path, 'image_A_gt': A_gt_path})
+        # if self.phase == 'test':
+        #     print(dataA['image_A'].shape)
+        return {'A': dataA['image_A'], 'A_gt': dataA['image_A_gt'], 'B': dataA['image_B'],
                 'A_paths': A_path, 'B_paths': B_path,
                 'A_meta': {'spacing': space_A, 'origin': origin_A, 'direction': direction_A},
                 'B_meta': {'spacing': space_B, 'origin': origin_B, 'direction': direction_B}}
@@ -136,6 +133,8 @@ def get_transform(opt, keys=['image'], label=False):
         [
             transforms.LoadImaged(keys=keys),
             transforms.EnsureChannelFirstd(keys=keys),
+            # CheckDim(keys=keys),
+
             # transforms.Orientationd(keys=keys,
             #                         axcodes="RAS"),
             # transforms.Spacingd(keys=keys,
@@ -149,15 +148,15 @@ def get_transform(opt, keys=['image'], label=False):
             #                                 clip=True),
             ScaleMinMaxNorm(keys=keys[:-1], a_min=MIN, a_max=MAX),
             # transforms.CropForegroundd(keys=keys, source_key="image"),
-            transforms.SpatialPadd(keys=keys, spatial_size=(196, 196, -1), mode='reflect'),
+            # transforms.SpatialPadd(keys=keys, spatial_size=(196, 196, -1), mode='reflect'),
             # CheckDim(keys=keys),
             transforms.RandSpatialCropd(keys=keys,
-                                        roi_size=(176, 176, 1),
+                                        roi_size=(-1, -1, 1),
                                         random_size=False),
             # CheckDim(keys=keys),
 
-            transforms.Resized(keys=keys, spatial_size=(256, 256, 1),
-                               mode=mode),
+            # transforms.Resized(keys=keys, spatial_size=(256, 256, 1),
+            #                    mode=mode),
             # CheckDim(keys=keys),
 
             transforms.Rotate90d(keys=keys, k=2, spatial_axes=(0, 1)),
@@ -187,6 +186,8 @@ def get_transform(opt, keys=['image'], label=False):
             #     prob=0.2,
             #     max_k=3,
             # ),
+            # CheckDim(keys=keys),
+
             transforms.RandScaleIntensityd(keys=keys[:-1], factors=0.1, prob=1.0),
             transforms.RandShiftIntensityd(keys=keys[:-1], offsets=0.1, prob=1.0),
             transforms.ToTensord(keys=keys),
@@ -196,6 +197,7 @@ def get_transform(opt, keys=['image'], label=False):
         [
             transforms.LoadImaged(keys=keys),
             transforms.EnsureChannelFirstd(keys=keys),
+            # CheckDim(keys=keys),
             # transforms.Orientationd(keys=keys,
             #                         axcodes="RAS"),
             # transforms.Spacingd(keys=keys,
@@ -208,8 +210,14 @@ def get_transform(opt, keys=['image'], label=False):
             #                                 b_max=1.,
             #                                 clip=True),
             ScaleMinMaxNorm(keys=keys[:-1], a_min=MIN, a_max=MAX),
-            transforms.CenterSpatialCropd(keys=keys, roi_size=(176, 176, 1), ),
-            transforms.Resized(keys=keys, spatial_size=(256, 256, 1), mode=mode),
+            # CheckDim(keys=keys),
+
+            # transforms.RandSpatialCropd(keys=keys,
+            #                             roi_size=(-1, -1, 1),
+            #                             random_size=False),
+
+            # transforms.CenterSpatialCropd(keys=keys, roi_size=(176, 176, 1), ),
+            # transforms.Resized(keys=keys, spatial_size=(256, 256, 1), mode=mode),
             transforms.Rotate90d(keys=keys, k=2, spatial_axes=(0, 1)),
             transforms.ToTensord(keys=keys),
         ]
@@ -230,18 +238,24 @@ def get_transform(opt, keys=['image'], label=False):
             #                                 b_max=1.,
             #                                 clip=True),
             ScaleMinMaxNorm(keys=keys[:-1], a_min=MIN, a_max=MAX),
-            transforms.CenterSpatialCropd(keys=keys, roi_size=(176, 176, -1), ),
+            # CheckDim(keys=keys),
+            # transforms.CenterSpatialCropd(keys=keys, roi_size=(176, 176, -1), ),
             transforms.Resized(keys=keys, spatial_size=(256, 256, -1), mode=mode),
             transforms.Rotate90d(keys=keys, k=2, spatial_axes=(0, 1)),
             transforms.ToTensord(keys=keys),
         ]
     )
 
-    if opt.isTrain and opt.phase == 'train':
+    if opt.phase == 'train':
+        # print('using train_transform')
         return train_transform
-    elif opt.isTrain and opt.phase == 'test':
+    elif opt.isTrain and opt.phase == 'val':
+        # print('using val_transform')
+
         return val_transform
     else:
+        # print('using test_transform')
+
         return test_transform
 
 
