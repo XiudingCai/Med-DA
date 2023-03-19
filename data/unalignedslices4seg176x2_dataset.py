@@ -209,7 +209,7 @@ def get_transform(opt, keys=['image'], label=False):
             #                                 clip=True),
             ScaleMinMaxNorm(keys=keys[:-1], a_min=MIN, a_max=MAX),
             transforms.CenterSpatialCropd(keys=keys, roi_size=(176, 176, 1), ),
-            transforms.Resized(keys=keys, spatial_size=(256, 256, 1), mode=mode),
+            transforms.Resized(keys=keys, spatial_size=(256, 256, -1), mode=mode),
             transforms.Rotate90d(keys=keys, k=2, spatial_axes=(0, 1)),
             transforms.ToTensord(keys=keys),
         ]

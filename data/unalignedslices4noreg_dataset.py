@@ -119,7 +119,7 @@ def get_transform(opt, keys=['image']):
     DATASET = os.path.basename(opt.dataroot)
     MIN = -1.
     MAX = 1.
-    if 'MR2CT' in DATASET:
+    if True:
         opt.padding_size = (512, 512, 256)
         opt.patch_size = (256, 256, 3)
         opt.resize_size = (256, 256, 3)

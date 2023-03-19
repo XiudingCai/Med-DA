@@ -42,6 +42,7 @@ class BaseModel(ABC):
         self.optimizers = []
         self.image_paths = []
         self.metric = 0  # used for learning rate policy 'plateau'
+        self.current_epoch = 0
 
     @staticmethod
     def dict_grad_hook_factory(add_func=lambda x: x):
@@ -161,6 +162,12 @@ class BaseModel(ABC):
                 errors_ret[name] = float(getattr(self, 'loss_' + name))  # float(...) works for both scalar tensor and float number
         return errors_ret
 
+    def set_epoch(self, epoch):
+        self.current_epoch = epoch
+
+    def get_epoch(self):
+        return self.current_epoch
+
     def save_networks(self, epoch):
         """Save all the networks to the disk.
 
@@ -178,6 +185,18 @@ class BaseModel(ABC):
                     net.cuda(self.gpu_ids[0])
                 else:
                     torch.save(net.cpu().state_dict(), save_path)
+
+    def save_texts(self, text, outfile_name):
+        """Save all the networks to the disk.
+
+        Parameters:
+            epoch (int) -- current epoch; used in the file name '%s_net_%s.pth' % (epoch, name)
+        """
+        save_filename = f'{outfile_name}.txt'
+        save_path = os.path.join(self.save_dir, save_filename)
+
+        with open(save_path, mode='a') as f:
+            f.write(str(text) + '\n\n')
 
     def __patch_instance_norm_state_dict(self, state_dict, module, keys, i=0):
         """Fix InstanceNorm checkpoints incompatibility (prior to 0.4)"""
@@ -221,12 +240,10 @@ class BaseModel(ABC):
                 # patch InstanceNorm checkpoints prior to 0.4
                 # for key in list(state_dict.keys()):  # need to copy keys here because we mutate in loop
                 #    self.__patch_instance_norm_state_dict(state_dict, net, key.split('.'))
-
-                if set(net.state_dict().keys()).issubset(set(state_dict.keys())):
-                    for k in list(state_dict.keys()):
-                        if k not in net.state_dict().keys():
-                            state_dict.pop(k)
-                net.load_state_dict(state_dict)
+                if not self.opt.isTrain:
+                    net.load_state_dict(state_dict, strict=False)
+                else:
+                    net.load_state_dict(state_dict)
 
     def print_networks(self, verbose):
         """Print the total number of parameters in the network and (if verbose) network architecture

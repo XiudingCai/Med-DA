@@ -1198,13 +1198,13 @@ def MR2CT_Reg():
     # # ##############################  IXI  ############################### # #
 
     # 1840 sec/epoch
-    exp = Experiment(dataset="MR2CT_affine_crop", model="cutndv2", name="cutndv2_ep5k", load_size=256, netG='resnet_9blocks',
+    exp = Experiment(dataset="original_TRSAA_crop_BY_TUMOR", model="cutndv2", name="cutndv2_ep5k", load_size=256, netG='resnet_9blocks',
                      input_nc=1, output_nc=1, dataset_mode='unalignedslices4noreg', gpu_ids='0',
-                     dataroot="/home/yht/Casit/Datasets/ez/datasets/MR2CT_Reg",
+                     dataroot="/home/cas/home_ez/Datasets/CT2MR_Reg",
                      extra=" --num_K 1 --ngf 64")
-    # exp.train(batch_size=1, n_epochs=2500, n_epochs_decay=2500, nce_idt=True, continue_train=False,
-    #           extra=" --save_latest_freq 5000 --display_ncols=4 --display_freq 100")  # --netD basic3d
-    exp.test()
+    exp.train(batch_size=1, n_epochs=2500, n_epochs_decay=2500, nce_idt=True, continue_train=False,
+              extra=" --save_latest_freq 5000 --display_ncols=4 --display_freq 100")  # --netD basic3d
+    # exp.test()
     # # # exp.fid()
     # exp.eval(metric_list, testB=False)
 
@@ -1218,14 +1218,34 @@ def BraTS19():
 
     # # ##############################  IXI  ############################### # #
 
+    exp = Experiment(dataset="original_TRSAA_crop_BY_TUMOR", model="dcl3d", name="dcl3d_ep2k", load_size=256, netG='resnet_9blocks',
+                     input_nc=1, output_nc=1, dataset_mode='unalignedslices4seg176x2', gpu_ids='0',
+                     dataroot="/home/cas/home_ez/Datasets/CT2MR_Reg",
+                     extra=" --num_K 0 --ngf 64")
+    exp.train(batch_size=2, n_epochs=1000, n_epochs_decay=1000, nce_idt=True, continue_train=False,
+              extra=" --save_latest_freq 5000 --display_freq 50"
+                    " --display_ncols 7 --eval_metric --eval_freq 200")  # --netD basic3d
+    # exp.test(phase='train')
+    # exp.test(phase='test')
+    # # # exp.fid()
+    # exp.eval(metric_list, testB=False)
+
+    exp = Experiment(dataset="BraTS19", model="dcl3d19v2", name="dcl3d19v2_ep3k", load_size=256, netG='resnet_9blocks',
+                     input_nc=1, output_nc=1, dataset_mode='unaligned4brats19', gpu_ids='0',
+                     dataroot="/media/cas/4053447d-1eaa-4b32-ad96-a8c03e4e35d2/DataBaseNo.1",
+                     extra=" --num_K 0 --ngf 64")
+    # exp.train(batch_size=2, n_epochs=1500, n_epochs_decay=1500, nce_idt=True, continue_train=False,
+    #           extra=" --save_latest_freq 5000 --display_freq 50"
+    #                 " --display_ncols 7 --eval_metric --eval_freq 200")  # --netD basic3d
+
     # 1840 sec/epoch
     exp = Experiment(dataset="MMSeg", model="mmseg", name="mmseg_ep3k", load_size=256, netG='resnet_9blocks',
                      input_nc=1, output_nc=1, dataset_mode='mmseg', gpu_ids='0',
                      dataroot="/home/cas/home_ez/Datasets/CT2MR_Reg",
                      extra=" --num_K 0 --ngf 64")
-    exp.train(batch_size=1, n_epochs=1500, n_epochs_decay=1500, nce_idt=True, continue_train=False,
-              extra=" --save_latest_freq 5000 --display_freq 50"
-                    " --display_ncols 7 --eval_metric --eval_freq 20")  # --netD basic3d
+    # exp.train(batch_size=1, n_epochs=1500, n_epochs_decay=1500, nce_idt=True, continue_train=False,
+    #           extra=" --save_latest_freq 5000 --display_freq 50"
+    #                 " --display_ncols 7 --eval_metric --eval_freq 20")  # --netD basic3d
 
     # 1840 sec/epoch
     exp = Experiment(dataset="original_TRSAA_crop", model="dcl3d", name="dcl3d_ep2k", load_size=256, netG='resnet_9blocks',
@@ -1239,7 +1259,6 @@ def BraTS19():
     # exp.test(phase='test')
     # # # exp.fid()
     # exp.eval(metric_list, testB=False)
-
 
     # 1840 sec/epoch
     exp = Experiment(dataset="BraTS19", model="dcl3d19", name="dcl3d_ep3k", load_size=256, netG='resnet_9blocks',
@@ -3425,12 +3444,59 @@ def our_proposal_SR():
 
     show_results(metric_list, rowsA, rowsB, testB=False)
 
+def enco_4_ct2mr():
+    exp = Experiment(dataset="original_TRSAA_crop_BY_TUMOR", model="dcl3d", name="dcl3d_ep4k", load_size=256, netG='resnet_9blocks',
+                     input_nc=1, output_nc=1, dataset_mode='unalignedslices4seg176x2', gpu_ids='0',
+                     dataroot="/home/cas/home_ez/Datasets/CT2MR_Reg",
+                     extra=" --num_K 0 --ngf 64")
+    exp.train(batch_size=2, n_epochs=2000, n_epochs_decay=2000, nce_idt=True, continue_train=False,
+              extra=" --save_latest_freq 5000 --display_freq 50 --serial_batches"
+                    " --display_ncols 7 --eval_metric --eval_freq 200")  # --netD basic3d
+    # exp.test(phase='train')
+    # exp.test(phase='test')
+    # # # exp.fid()
+    # exp.eval(metric_list, testB=False)
+
+    exp = Experiment(dataset="original_TRSAA_crop_BY_TUMOR", model="encov2", name="encov2_ep8k", load_size=256, netG='resnet_9blocks',
+                     input_nc=1, output_nc=1, dataset_mode='unalignedslices4seg176x2', gpu_ids='0',
+                     dataroot="/home/cas/home_ez/Datasets/CT2MR_Reg",
+                     extra=" --num_K 0 --ngf 64")
+    # exp.train(batch_size=8, n_epochs=4000, n_epochs_decay=4000, nce_idt=True, continue_train=False,
+    #           extra=' --save_latest_freq 5000 --display_ncols 3 --nce_layers 3,7,13,18,24,28 --display_freq 100'
+    #                 ' --lambda_IDT 10 --lambda_NCE 10 --netF cam_mlp_sample_nls --stop_idt_epochs 4000'
+    #                 ' --lr_G 5e-5 --lr_F 5e-5 --lr_D 2e-4 --warmup_epochs 100 --gan_mode lsgan  --num_patches 256'
+    #                 ' --prj_norm LN --display_ncols 4')
+    # exp.test(phase='train')
+    # exp.test(phase='test')
+    # # # exp.fid()
+    # exp.eval(metric_list, testB=False)
+
+    exp = Experiment(dataset="original_TRSAA_crop_BY_TUMOR", model="encov1", name="encov1_ep8k", load_size=256, netG='resnet_9blocks',
+                     input_nc=1, output_nc=1, dataset_mode='unalignedslices4seg176x2', gpu_ids='0',
+                     dataroot="/home/cas/home_ez/Datasets/CT2MR_Reg",
+                     extra=" --num_K 0 --ngf 64")
+    # exp.train(batch_size=8, n_epochs=4000, n_epochs_decay=4000, nce_idt=True, continue_train=False,
+    #           extra=' --save_latest_freq 5000 --display_ncols 3 --nce_layers 3,7,13,18,24,28 --display_freq 100'
+    #                 ' --lambda_IDT 10 --lambda_NCE 10 --netF cam_mlp_sample_nls --stop_idt_epochs 4000'
+    #                 ' --lr_G 5e-5 --lr_F 5e-5 --lr_D 2e-4 --warmup_epochs 100 --gan_mode lsgan  --num_patches 256'
+    #                 ' --prj_norm LN --display_ncols 4')
+    # exp.test(phase='train')
+    # exp.test(phase='test')
+    # # # exp.fid()
+    # exp.eval(metric_list, testB=False)
+
+    # exp.train(batch_size=8, n_epochs=4000, n_epochs_decay=4000, nce_idt=True, continue_train=False,
+    #           extra=' --save_latest_freq 5000 --display_ncols 3 --nce_layers 3,7,13,18,24,28 --display_freq 100'
+    #                 ' --lambda_IDT 10 --lambda_NCE 10 --netF cam_mlp_sample_nls --stop_idt_epochs 4000'
+    #                 ' --lr_G 5e-5 --lr_F 5e-5 --lr_D 2e-4 --warmup_epochs 100 --gan_mode lsgan  --num_patches 256'
+    #                 ' --prj_norm LN --display_ncols 4')
 
 def main():
     # main()
     # baseline_IXI()
     # MR2CT_Reg()
-    BraTS19()
+    # BraTS19()
+    enco_4_ct2mr()
 
 
 if __name__ == '__main__':

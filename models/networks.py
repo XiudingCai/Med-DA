@@ -401,10 +401,28 @@ def define_F(input_nc, netF, norm='batch', use_dropout=False, init_type='normal'
         net = PatchSampleF(use_mlp=False, init_type=init_type, init_gain=init_gain, gpu_ids=gpu_ids, nc=opt.netF_nc)
     elif netF == 'mlp_sample':
         net = PatchSampleF(use_mlp=True, init_type=init_type, init_gain=init_gain, gpu_ids=gpu_ids, nc=opt.netF_nc)
-    elif netF == 'cam_sample':
-        net = PatchCamSampleF(use_mlp=False, init_type=init_type, init_gain=init_gain, gpu_ids=gpu_ids, nc=opt.netF_nc)
-    elif netF == 'mlp_cam_sample':
-        net = PatchCamSampleF(use_mlp=True, init_type=init_type, init_gain=init_gain, gpu_ids=gpu_ids, nc=opt.netF_nc)
+    # elif netF == 'mlp_sample_predict':
+    #     net = PredictorF(use_mlp=True, init_type=init_type, init_gain=init_gain, gpu_ids=gpu_ids, nc=opt.netF_nc)
+    elif netF == 'cam_mlp_sample':
+        net = PatchCamSampleF(use_mlp=True, init_type=init_type, init_gain=init_gain, gpu_ids=gpu_ids, nc=opt.netF_nc,
+                              opt=opt)
+    # elif netF == 'mlp_sample_nl':
+    #     net = PatchSampleNonLinearF(use_mlp=True, init_type=init_type, init_gain=init_gain, gpu_ids=gpu_ids,
+    #                                 nc=opt.netF_nc)
+    elif netF == 'cam_mlp_sample_nl':
+        net = PatchCamSampleNonLinearF(use_mlp=True, init_type=init_type, init_gain=init_gain, gpu_ids=gpu_ids,
+                                       nc=opt.netF_nc,
+                                       opt=opt)
+    elif netF == 'cam_mlp_sample_nls':
+        net = PatchCamSampleNonLinearSamF(use_mlp=True, init_type=init_type, init_gain=init_gain, gpu_ids=gpu_ids,
+                                          nc=opt.netF_nc,
+                                          opt=opt)
+    elif netF == 'cam_mlp_sample_s':
+        net = PatchCamSampleSamF(use_mlp=True, init_type=init_type, init_gain=init_gain, gpu_ids=gpu_ids,
+                                 nc=opt.netF_nc, opt=opt)
+    elif netF == 'cam_sample_s':
+        net = PatchCamSampleSamF(use_mlp=False, init_type=init_type, init_gain=init_gain, gpu_ids=gpu_ids,
+                                 nc=opt.netF_nc, opt=opt)
     elif netF == 'strided_conv':
         net = StridedConvF(init_type=init_type, init_gain=init_gain, gpu_ids=gpu_ids)
     else:
@@ -778,7 +796,7 @@ class PatchSampleF(nn.Module):
 
 
 class PatchCamSampleF(nn.Module):
-    def __init__(self, use_mlp=False, init_type='normal', init_gain=0.02, nc=256, gpu_ids=[]):
+    def __init__(self, use_mlp=False, init_type='normal', init_gain=0.02, nc=256, gpu_ids=[], opt=None):
         # potential issues: currently, we use the same patch_ids for multiple images in the batch
         super(PatchCamSampleF, self).__init__()
         self.l2norm = Normalize(2)
@@ -848,6 +866,232 @@ class PatchCamSampleF(nn.Module):
             return_feats.append(x_sample)
         return return_feats, return_ids
 
+class PatchCamSampleNonLinearF(nn.Module):
+    def __init__(self, use_mlp=False, init_type='normal', init_gain=0.02, nc=256, gpu_ids=[], opt=None):
+        # potential issues: currently, we use the same patch_ids for multiple images in the batch
+        super(PatchCamSampleNonLinearF, self).__init__()
+        self.l2norm = Normalize(2)
+        self.use_mlp = use_mlp
+        self.nc = nc  # hard-coded
+        self.mlp_init = False
+        self.init_type = init_type
+        self.init_gain = init_gain
+        self.gpu_ids = gpu_ids
+        self.opt = opt
+
+        if self.opt.prj_norm == 'BN':
+            self.norm = nn.BatchNorm1d
+        elif self.opt.prj_norm == 'LN':
+            self.norm = nn.LayerNorm
+        elif self.opt.prj_norm == 'None':
+            self.norm = nn.Identity
+        else:
+            raise NotImplementedError
+
+        self.oversample_ratio = 4 if self.opt.oversample_ratio is None else self.opt.oversample_ratio
+        self.random_ratio = 0.5 if self.opt.random_ratio is None else self.opt.random_ratio
+
+    def create_mlp(self, feats):
+        for mlp_id, feat in enumerate(feats):
+            input_nc = feat.shape[1]
+            hidden_dim = self.nc
+            mlp = nn.Sequential(
+                *[nn.Linear(input_nc, hidden_dim, bias=False), self.norm(hidden_dim), nn.ReLU(inplace=True),
+                  # nn.Linear(hidden_dim, hidden_dim, bias=False), self.norm(hidden_dim), nn.ReLU(inplace=True),
+                  nn.Linear(hidden_dim, hidden_dim, bias=False),
+                  self.norm(hidden_dim, affine=False) if self.opt.prj_norm == 'BN' else self.norm(hidden_dim)])
+            if len(self.gpu_ids) > 0:
+                mlp.cuda()
+            setattr(self, 'mlp_%d' % mlp_id, mlp)
+        init_net(self, self.init_type, self.init_gain, self.gpu_ids)
+        self.mlp_init = True
+
+    def create_prj(self, feats):
+        for mlp_id, feat in enumerate(feats):
+            input_nc = self.nc
+            hidden_dim = self.nc // 2
+            mlp = nn.Sequential(
+                *[nn.Linear(input_nc, hidden_dim, bias=False), self.norm(hidden_dim), nn.ReLU(inplace=True),
+                  nn.Linear(hidden_dim, input_nc)])
+            if len(self.gpu_ids) > 0:
+                mlp.cuda()
+            setattr(self, 'prj_%d' % mlp_id, mlp)
+        init_net(self, self.init_type, self.init_gain, self.gpu_ids)
+        self.mlp_init = True
+
+    def forward(self, feats, num_patches=64, patch_ids=None, cams=None, prj=False):
+        return_ids = []
+        return_feats = []
+        if self.use_mlp and not self.mlp_init:
+            self.create_mlp(feats)
+            self.create_prj(feats)
+        for feat_id, feat in enumerate(feats):
+            B, H, W = feat.shape[0], feat.shape[2], feat.shape[3]
+            feat_reshape = feat.permute(0, 2, 3, 1).flatten(1, 2)
+
+            if num_patches > 0:
+                feat_b_list = []
+                id_b_list = []
+                if patch_ids is not None:
+                    for b, patch_id in enumerate(patch_ids[feat_id]):
+                        feat_b_list.append(feat_reshape[b, patch_id, :])
+                    feat_reshape = torch.cat(feat_b_list, dim=0).unsqueeze(0)
+                else:
+                    num_points = int(min(num_patches, H * W))
+                    for b in range(cams[feat_id].shape[0]):
+                        cam_b = cams[feat_id][b]
+
+                        points_sampled = torch.randperm(H * W)[:num_points * self.oversample_ratio]
+
+                        values, indices = torch.sort(cam_b.flatten()[points_sampled], descending=False)
+
+                        random_num_points = int(num_points * self.random_ratio)
+                        good_num_points = num_points - random_num_points
+
+                        good_idx = points_sampled[indices[:good_num_points]]
+
+                        if random_num_points > 0:
+                            # points_random = torch.randperm(H * W)[-random_num_points:]
+                            points_random = points_sampled[indices[-random_num_points:]]
+                            patch_id = torch.cat([good_idx, points_random], dim=0)
+                        else:
+                            patch_id = good_idx
+
+                        feat_b_list.append(feat_reshape[b, patch_id, :])
+                        id_b_list.append(patch_id)
+                    feat_reshape = torch.cat(feat_b_list, dim=0).unsqueeze(0)
+
+                x_sample = feat_reshape.flatten(0, 1)  # reshape(-1, x.shape[1])
+            else:
+                x_sample = feat_reshape
+                id_b_list = []
+            if self.use_mlp:
+                mlp = getattr(self, 'mlp_%d' % feat_id)
+                x_sample = mlp(x_sample)
+            if prj:
+                prj = getattr(self, 'prj_%d' % feat_id)
+                x_sample = prj(x_sample)
+            return_ids.append(id_b_list)
+            x_sample = self.l2norm(x_sample)
+
+            if num_patches == 0:
+                x_sample = x_sample.permute(0, 2, 1).reshape([B, x_sample.shape[-1], H, W])
+            return_feats.append(x_sample)
+        return return_feats, return_ids
+
+
+class PatchCamSampleNonLinearSamF(nn.Module):
+    def __init__(self, use_mlp=False, init_type='normal', init_gain=0.02, nc=256, gpu_ids=[], opt=None):
+        # potential issues: currently, we use the same patch_ids for multiple images in the batch
+        super(PatchCamSampleNonLinearSamF, self).__init__()
+        self.l2norm = Normalize(2)
+        self.use_mlp = use_mlp
+        self.nc = nc  # hard-coded
+        self.mlp_init = False
+        self.init_type = init_type
+        self.init_gain = init_gain
+        self.gpu_ids = gpu_ids
+        self.opt = opt
+
+        if self.opt.prj_norm == 'BN':
+            self.norm = nn.BatchNorm1d
+        elif self.opt.prj_norm == 'LN':
+            self.norm = nn.LayerNorm
+        elif self.opt.prj_norm == 'None':
+            self.norm = nn.Identity
+        else:
+            raise NotImplementedError
+
+        self.oversample_ratio = 4 if self.opt.oversample_ratio is None else self.opt.oversample_ratio
+        self.random_ratio = 0.5 if self.opt.random_ratio is None else self.opt.random_ratio
+
+    def create_mlp(self, feats):
+        for mlp_id, feat in enumerate(feats):
+            input_nc = feat.shape[1]
+            hidden_dim = self.nc
+            mlp = nn.Sequential(
+                *[nn.Linear(input_nc, hidden_dim, bias=False), self.norm(hidden_dim), nn.ReLU(inplace=True),
+                  # nn.Linear(hidden_dim, hidden_dim, bias=False), self.norm(hidden_dim), nn.ReLU(inplace=True),
+                  nn.Linear(hidden_dim, hidden_dim, bias=False),
+                  self.norm(hidden_dim, affine=False) if self.opt.prj_norm == 'BN' else self.norm(hidden_dim)])
+            if len(self.gpu_ids) > 0:
+                mlp.cuda()
+            setattr(self, 'mlp_%d' % mlp_id, mlp)
+        init_net(self, self.init_type, self.init_gain, self.gpu_ids)
+        self.mlp_init = True
+
+    def create_prj(self, feats):
+        for mlp_id, feat in enumerate(feats):
+            input_nc = self.nc
+            hidden_dim = input_nc // 2
+            mlp = nn.Sequential(
+                *[nn.Linear(input_nc, hidden_dim, bias=False), self.norm(hidden_dim), nn.ReLU(inplace=True),
+                  nn.Linear(hidden_dim, input_nc)])
+            if len(self.gpu_ids) > 0:
+                mlp.cuda()
+            setattr(self, 'prj_%d' % mlp_id, mlp)
+        init_net(self, self.init_type, self.init_gain, self.gpu_ids)
+        self.mlp_init = True
+
+    def forward(self, feats, num_patches=64, patch_ids=None, cams=None, prj=False):
+        return_ids = []
+        return_feats = []
+        if self.use_mlp and not self.mlp_init:
+            self.create_mlp(feats)
+            self.create_prj(feats)
+        for feat_id, feat in enumerate(feats):
+            B, H, W = feat.shape[0], feat.shape[2], feat.shape[3]
+            feat_reshape = feat.permute(0, 2, 3, 1).flatten(1, 2)
+
+            if num_patches > 0:
+                feat_b_list = []
+                id_b_list = []
+                if patch_ids is not None:
+                    for b, patch_id in enumerate(patch_ids[feat_id]):
+                        feat_b_list.append(feat_reshape[b, patch_id, :])
+                    feat_reshape = torch.cat(feat_b_list, dim=0).unsqueeze(0)
+                else:
+                    num_points = int(min(num_patches, H * W))
+                    for b in range(cams[feat_id].shape[0]):
+                        cam_b = cams[feat_id][b]
+
+                        points_sampled = torch.randperm(H * W)[:num_points * self.oversample_ratio]
+
+                        values, indices = torch.sort(cam_b.flatten()[points_sampled], descending=False)
+
+                        random_num_points = int(num_points * self.random_ratio)
+                        good_num_points = num_points - random_num_points
+
+                        good_idx = points_sampled[indices[:good_num_points]]
+
+                        if random_num_points > 0:
+                            points_random = torch.randperm(H * W)[-random_num_points:]
+                            # points_random = points_sampled[indices[-random_num_points:]]
+                            patch_id = torch.cat([good_idx, points_random], dim=0)
+                        else:
+                            patch_id = good_idx
+
+                        feat_b_list.append(feat_reshape[b, patch_id, :])
+                        id_b_list.append(patch_id)
+                    feat_reshape = torch.cat(feat_b_list, dim=0).unsqueeze(0)
+
+                x_sample = feat_reshape.flatten(0, 1)  # reshape(-1, x.shape[1])
+            else:
+                x_sample = feat_reshape
+                id_b_list = []
+            if self.use_mlp:
+                mlp = getattr(self, 'mlp_%d' % feat_id)
+                x_sample = mlp(x_sample)
+            if prj:
+                prj = getattr(self, 'prj_%d' % feat_id)
+                x_sample = prj(x_sample)
+            return_ids.append(id_b_list)
+            x_sample = self.l2norm(x_sample)
+
+            if num_patches == 0:
+                x_sample = x_sample.permute(0, 2, 1).reshape([B, x_sample.shape[-1], H, W])
+            return_feats.append(x_sample)
+        return return_feats, return_ids
 
 class G_Resnet(nn.Module):
     def __init__(self, input_nc, output_nc, nz, num_downs, n_res, ngf=64,
@@ -1364,18 +1608,36 @@ class ResnetGenerator(nn.Module):
 
         self.model = nn.Sequential(*model)
 
-    def forward(self, input, layers=[], encode_only=False):
-        """
-        input: input
-        layers: nec_layers, e.g., [0, 4, 8, 12, 16]
-        encode_only: when encode_only is True, for nce loss
-        """
-        # -1 means the last layer
+    def forward(self, input, layers=[], encode_only=False, return_layer_id=None, CUTv2=False):
+        if CUTv2:
+            feat = input
+            feats = []
+            if 0 in layers:
+                feats.append(feat)
+                layers = layers[1:]  # remove 0 from list
+            for layer_id, layer in enumerate(self.model):
+                # print(layer_id, layer)
+                feat = layer(feat)
+                if layer_id in layers:
+                    feats.append(feat)
+
+            return feat, feats  # return both output and intermediate features
+
+        if return_layer_id is not None:
+            feat = input
+            for layer_id, layer in enumerate(self.model):
+                feat = layer(feat)
+                if layer_id == return_layer_id:
+                    return feat
+
         if -1 in layers:
             layers.append(len(self.model))
         if len(layers) > 0:
             feat = input
             feats = []
+            if 0 in layers:
+                feats.append(feat)
+                layers = layers[1:]  # remove 0 from list
             for layer_id, layer in enumerate(self.model):
                 # print(layer_id, layer)
                 feat = layer(feat)
@@ -1392,19 +1654,57 @@ class ResnetGenerator(nn.Module):
             return feat, feats  # return both output and intermediate features
         else:
             """Standard forward"""
-            # print(input.shape)
-
-            isTrain = len(input.shape) == 5
-            if isTrain:
+            # print('input:', input.shape)
+            # for idx, m in enumerate(self.model):
+            #     input = m(input)
+            #     print(idx, m._get_name(), input.shape)
+            # input: torch.Size([1, 1, 256, 256])
+            # 0 ReflectionPad2d torch.Size([1, 1, 262, 262])
+            # 1 Conv2d torch.Size([1, 64, 256, 256])
+            # 2 InstanceNorm2d torch.Size([1, 64, 256, 256])
+            # 3 ReLU torch.Size([1, 64, 256, 256])
+            # 4 Conv2d torch.Size([1, 128, 256, 256])
+            # 5 InstanceNorm2d torch.Size([1, 128, 256, 256])
+            # 6 ReLU torch.Size([1, 128, 256, 256])
+            # 7 Downsample torch.Size([1, 128, 128, 128])
+            # 8 Conv2d torch.Size([1, 256, 128, 128])
+            # 9 InstanceNorm2d torch.Size([1, 256, 128, 128])
+            # 10 ReLU torch.Size([1, 256, 128, 128])
+            # 11 Downsample torch.Size([1, 256, 64, 64])
+            # 12 ResnetBlock torch.Size([1, 256, 64, 64])
+            # 13 ResnetBlock torch.Size([1, 256, 64, 64])
+            # 14 ResnetBlock torch.Size([1, 256, 64, 64])
+            # 15 ResnetBlock torch.Size([1, 256, 64, 64])
+            # 16 ResnetBlock torch.Size([1, 256, 64, 64])
+            # 17 ResnetBlock torch.Size([1, 256, 64, 64])
+            # 18 ResnetBlock torch.Size([1, 256, 64, 64])
+            # 19 ResnetBlock torch.Size([1, 256, 64, 64])
+            # 20 ResnetBlock torch.Size([1, 256, 64, 64])
+            # 21 Upsample torch.Size([1, 256, 128, 128])
+            # 22 Conv2d torch.Size([1, 128, 128, 128])
+            # 23 InstanceNorm2d torch.Size([1, 128, 128, 128])
+            # 24 ReLU torch.Size([1, 128, 128, 128])
+            # 25 Upsample torch.Size([1, 128, 256, 256])
+            # 26 Conv2d torch.Size([1, 64, 256, 256])
+            # 27 InstanceNorm2d torch.Size([1, 64, 256, 256])
+            # 28 ReLU torch.Size([1, 64, 256, 256])
+            # 29 ReflectionPad2d torch.Size([1, 64, 262, 262])
+            # 30 Conv2d torch.Size([1, 1, 256, 256])
+            # 31 Tanh torch.Size([1, 1, 256, 256])
+            if len(input.shape) == 5:
                 input = input.squeeze(1).permute(0, 3, 2, 1)
-                input = torch.nn.functional.interpolate(input, size=(256, 256), mode='bilinear')
-            # print(input.shape)
-            fake = self.model(input)
-            # print(fake.shape)
-            if isTrain:
-                # fake = torch.nn.functional.interpolate(fake, size=(176, 176), mode='bilinear')
+                fake = self.model(input)
                 fake = fake.permute(0, 3, 2, 1).unsqueeze(1)
+            else:
+                fake = self.model(input)
             return fake
+
+    def forward_D(self, input, return_layer=12):
+        feat = input
+        for layer_id, layer in enumerate(self.model):
+            feat = layer(feat)
+            if layer_id == return_layer:
+                return feat
 
 
 class NextGenerator(nn.Module):

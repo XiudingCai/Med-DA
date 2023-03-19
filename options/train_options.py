@@ -42,5 +42,8 @@ class TrainOptions(BaseOptions):
         parser.add_argument('--eval_metric', action='store_true', help='continue training: load the latest model')
         parser.add_argument('--eval_freq', type=int, default=500, help='frequency of showing training results on screen')
 
+        parser.add_argument('--warmup_epochs', type=int, default=-1, help='number of epochs with the initial learning rate')
+        parser.add_argument('--prj_norm', type=str, default='LN', help='train, val, test, etc')
+
         self.isTrain = True
         return parser

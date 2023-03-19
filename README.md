@@ -1,4 +1,4 @@
 # Med-DA
 
-tricycle v1:
-tricycle v2: 
+encov1: original EnCo
+encov2: add segmentor metric
