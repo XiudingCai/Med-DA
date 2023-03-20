@@ -35,9 +35,10 @@ class BaseOptions():
         parser.add_argument('--ngf', type=int, default=64, help='# of gen filters in the last conv layer')
         parser.add_argument('--ndf', type=int, default=64, help='# of discrim filters in the first conv layer')
         parser.add_argument('--netD', type=str, default='basic',
-                            choices=['basic', 'basic3d', 'n_layers', 'pixel', 'patch', 'hg',
+                            choices=['basic', 'basic_aux', 'basic3d', 'n_layers', 'pixel', 'patch', 'hg',
                                      'tilestylegan2', 'stylegan2', 'n_layers_ms', 'n_layers_contrast'], help='specify discriminator architecture. The basic model is a 70x70 PatchGAN. n_layers allows you to specify the layers in the discriminator')
         parser.add_argument('--netG', type=str, default='resnet_9blocks', choices=['resnet_9blocks', 'resnet_6blocks', 'unet_256', 'unet_128', 'stylegan2', 'smallstylegan2', 'resnet_cat',
+                                                                                   'resnet_sifa', 'resnet_enc', 'resnet_dec',
                                                                                    'lptn', 'hrt', 'hrt_2blocks', 'hrt_nb', 'spos', 'resvit',
                                                                                    'inred', 'hourglass', 'frequency',
                                                                                    'swin',
