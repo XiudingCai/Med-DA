@@ -16,6 +16,7 @@ IMG_EXTENSIONS = [
     '.tif', '.TIF', '.tiff', '.TIFF',
     '.nii', '.nii.gz', '.dcm', '.dicom',
     '.NII', '.NII.GZ', '.DCM', '.DICOM',
+    '.npy', '.npz'
 ]
 
 

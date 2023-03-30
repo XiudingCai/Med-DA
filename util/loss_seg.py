@@ -82,11 +82,11 @@ class DiceCeLoss(nn.Module):
     def forward(self, predict, label):
         # predict is output of the model, i.e. without softmax [N,C,*]
         # label is not one hot encoding [N,1,*]
-
+        # print(predict.shape, label.shape)
         diceloss = self.diceloss(predict, label)
         celoss = self.celoss(predict, label)
         loss = celoss + self.alpha * diceloss
-        print(celoss, "celoss")
-        print(diceloss, "diceloss")
+        # print(celoss, "celoss")
+        # print(diceloss, "diceloss")
 
         return loss

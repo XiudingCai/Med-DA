@@ -297,15 +297,15 @@ def define_G(input_nc, output_nc, ngf, netG, norm='batch', use_dropout=False, in
     elif netG == 'resnet_4blocks':
         net = ResnetGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout,
                               no_antialias=no_antialias, no_antialias_up=no_antialias_up, n_blocks=4, opt=opt)
-    if netG == 'resnet_sifa':
-        net = ResnetGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout,
-                              no_antialias=no_antialias, no_antialias_up=no_antialias_up, n_blocks=9, skip=True, opt=opt)
+    elif netG == 'resnet_sifa':
+        net = SIFAGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout,
+                            no_antialias=no_antialias, no_antialias_up=no_antialias_up, n_blocks=9, skip=True, opt=opt)
     elif netG == 'resnet_enc':
         net = ResnetEncoder(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout,
-                            no_antialias=no_antialias, no_antialias_up=no_antialias_up, n_blocks=6, opt=opt)
+                            n_blocks=6, opt=opt)
     elif netG == 'resnet_dec':
         net = ResnetDecoder(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout,
-                            no_antialias=no_antialias, no_antialias_up=no_antialias_up, n_blocks=6, opt=opt)
+                            n_blocks=6, opt=opt)
 
     elif netG == 'next':
         net = NextGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout,
@@ -1741,7 +1741,7 @@ class SIFAGenerator(nn.Module):
             padding_type (str)  -- the name of padding layer in conv layers: reflect | replicate | zero
         """
         assert (n_blocks >= 0)
-        super(ResnetGenerator, self).__init__()
+        super(SIFAGenerator, self).__init__()
         self.opt = opt
         self.skip = skip
         if type(norm_layer) == functools.partial:
@@ -4976,11 +4976,13 @@ class ResnetDecoder(nn.Module):
         self.model = nn.Sequential(*model)
         self.tanh = nn.Tanh()
 
-    def forward(self, input, skip=None):
+    def forward(self, input, skip=None, tanh=True):
         """Standard forward"""
         x = self.model(input)
-        if self.skip:
-            return self.tanh(x + skip)
+        if skip is not None:
+            x = x + skip
+        if not tanh:
+            return x
         else:
             return self.tanh(x)
 

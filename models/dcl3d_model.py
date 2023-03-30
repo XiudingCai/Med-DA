@@ -224,7 +224,6 @@ class DCL3DModel(BaseModel):
             self.real_A_gt[self.real_A_gt <= 0] = 0
             self.real_A_gt = self.real_A_gt.squeeze(1).permute(0, 3, 2, 1)
 
-
         if self.opt.isTrain:
             self.real_A = self.real_A.squeeze(1).permute(0, 3, 2, 1)
             self.real_B = self.real_B.squeeze(1).permute(0, 3, 2, 1)
@@ -252,16 +251,20 @@ class DCL3DModel(BaseModel):
         real_A_gt = self.real_A_gt if AtoB else self.real_B_gt
 
         self.opt.patch_size = (256, 256, 1)
-        model_inferer = partial(sliding_window_inference,
-                                roi_size=(self.opt.patch_size[0], self.opt.patch_size[1], self.opt.patch_size[2]),
-                                sw_batch_size=1, predictor=model, overlap=0.5)
+        model_AtoB = partial(sliding_window_inference,
+                             roi_size=(self.opt.patch_size[0], self.opt.patch_size[1], self.opt.patch_size[2]),
+                             sw_batch_size=1, predictor=self.netG_A, overlap=0.5)
+        model_BtoA = partial(sliding_window_inference,
+                             roi_size=(self.opt.patch_size[0], self.opt.patch_size[1], self.opt.patch_size[2]),
+                             sw_batch_size=1, predictor=self.netG_B, overlap=0.5)
 
         with torch.no_grad():
             print(real_A.shape)
-            fake_B = model_inferer(real_A)
+            fake_B = model_AtoB(real_A)
+            fake_A = model_BtoA(real_B)
             # print(fake_B.shape, real_A_gt.shape)
 
-            real_A_list = [torch.rot90(real_A.squeeze(1).transpose(1, 3), k=2, dims=(2, 3))]
+            fake_A_list = [torch.rot90(fake_A.squeeze(1).transpose(1, 3), k=2, dims=(2, 3))]
             real_B_list = [torch.rot90(real_B.squeeze(1).transpose(1, 3), k=2, dims=(2, 3))]
             fake_B_list = [torch.rot90(fake_B.squeeze(1).transpose(1, 3), k=2, dims=(2, 3))]
 
@@ -271,11 +274,11 @@ class DCL3DModel(BaseModel):
 
         save_dir = os.path.join(self.opt.results_dir, self.opt.name, f'{self.opt.phase}_{self.opt.epoch}', 'images')
 
-        real_A_path = 'testA' if AtoB else 'trainB'
-        real_A_gt_path = 'testA_gt' if AtoB else 'trainB_gt'
-        fake_B_path = 'testB' if AtoB else 'trainA'
+        fake_A_path = 'testA' if AtoB else 'trainA'
+        real_A_gt_path = 'testA_gt' if AtoB else 'trainA_gt'
+        fake_B_path = 'testB' if AtoB else 'trainB'
 
-        os.makedirs(os.path.join(save_dir, real_A_path), exist_ok=True)
+        os.makedirs(os.path.join(save_dir, fake_A_path), exist_ok=True)
         os.makedirs(os.path.join(save_dir, real_A_gt_path), exist_ok=True)
         os.makedirs(os.path.join(save_dir, fake_B_path), exist_ok=True)
         os.makedirs(os.path.join(save_dir, 'real_B'), exist_ok=True)
@@ -284,30 +287,30 @@ class DCL3DModel(BaseModel):
             path = img_paths[i]
             name = os.path.basename(path)
 
-            real = real_A_list[i][0]  # * 1000
-            real_B = real_B_list[i][0]  # * 1000
-            fake = fake_B_list[i][0]  # * 1000
-            real = (real - real.min()) / (real.max() - real.min()) * 1000
-            real_B = (real_B - real_B.min()) / (real_B.max() - real_B.min()) * 1000
-            fake = (fake - fake.min()) / (fake.max() - fake.min()) * 1000
+            real = torch.nn.functional.interpolate(fake_A_list[i], (176, 176), mode='bilinear')[0]  # * 1000
+            real_B = torch.nn.functional.interpolate(real_B_list[i], (176, 176), mode='bilinear')[0]  # * 1000
+            fake = torch.nn.functional.interpolate(fake_B_list[i], (176, 176), mode='bilinear')[0]  # * 1000
+            real = (real - real.min()) / (real.max() - real.min())
+            real_B = (real_B - real_B.min()) / (real_B.max() - real_B.min())
+            fake = (fake - fake.min()) / (fake.max() - fake.min())
 
             label_a = real_A_gt_list[i][0]
             # fake = (fake + 1) / 2 * 1000
             # real = (real + 1) / 2 * 1000
 
-            nii = sitk.GetImageFromArray(fake.cpu().numpy().astype('int'))
+            nii = sitk.GetImageFromArray(fake.cpu().numpy())
             nii.SetOrigin([x.item() for x in self.image_meta['origin']])
             nii.SetSpacing([x.item() for x in self.image_meta['spacing']])
             nii.SetDirection([x.item() for x in self.image_meta['direction']])
             sitk.WriteImage(nii, os.path.join(save_dir, fake_B_path, name))
 
-            nii = sitk.GetImageFromArray(real.cpu().numpy().astype('int'))
+            nii = sitk.GetImageFromArray(real.cpu().numpy())
             nii.SetOrigin([x.item() for x in self.image_meta['origin']])
             nii.SetSpacing([x.item() for x in self.image_meta['spacing']])
             nii.SetDirection([x.item() for x in self.image_meta['direction']])
-            sitk.WriteImage(nii, os.path.join(save_dir, real_A_path, name))
+            sitk.WriteImage(nii, os.path.join(save_dir, fake_A_path, name))
 
-            nii = sitk.GetImageFromArray(real_B.cpu().numpy().astype('int'))
+            nii = sitk.GetImageFromArray(real_B.cpu().numpy())
             nii.SetOrigin([x.item() for x in self.image_meta['origin']])
             nii.SetSpacing([x.item() for x in self.image_meta['spacing']])
             nii.SetDirection([x.item() for x in self.image_meta['direction']])
