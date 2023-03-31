@@ -34,15 +34,15 @@ class Unaligned4MMWHSDataset(BaseDataset):
         BaseDataset.__init__(self, opt)
 
         if opt.phase == 'train':
-            self.dir_A = "/home/cas/home_ez/Datasets/MPSCL/data/data_np/train_ct"
-            self.dir_B = "/home/cas/home_ez/Datasets/MPSCL/data/data_np/train_mr"
-            self.dir_A_gt = "/home/cas/home_ez/Datasets/MPSCL/data/data_np/gt_train_ct"
-            self.dir_B_gt = "/home/cas/home_ez/Datasets/MPSCL/data/data_np/gt_train_mr"
+            self.dir_A = f"{opt.dataroot}/data_np/train_ct"
+            self.dir_B = f"{opt.dataroot}/data_np/train_mr"
+            self.dir_A_gt = f"{opt.dataroot}/data_np/gt_train_ct"
+            self.dir_B_gt = f"{opt.dataroot}/data_np/gt_train_mr"
         elif opt.phase == 'test':
-            self.dir_A = "/home/cas/home_ez/Datasets/MPSCL/data/data_np/val_ct"
-            self.dir_B = "/home/cas/home_ez/Datasets/MPSCL/data/data_np/val_mr"
-            self.dir_A_gt = "/home/cas/home_ez/Datasets/MPSCL/data/data_np/gt_val_ct"
-            self.dir_B_gt = "/home/cas/home_ez/Datasets/MPSCL/data/data_np/gt_val_mr"
+            self.dir_A = f"{opt.dataroot}/data_np/val_ct"
+            self.dir_B = f"{opt.dataroot}/data_np/val_mr"
+            self.dir_A_gt = f"{opt.dataroot}/data_np/gt_val_ct"
+            self.dir_B_gt = f"{opt.dataroot}/data_np/gt_val_mr"
 
         self.A_paths = sorted(make_dataset(self.dir_A, opt.max_dataset_size))  # load images from '/path/to/data/trainA'
         self.B_paths = sorted(make_dataset(self.dir_B, opt.max_dataset_size))  # load images from '/path/to/data/trainB'
@@ -79,8 +79,8 @@ class Unaligned4MMWHSDataset(BaseDataset):
             index_B = random.randint(0, self.B_size - 1)
         B_path = self.B_paths[index_B]
 
-        A_gt_path = self.A_gt_paths[index_A]
-        B_gt_path = self.B_gt_paths[index_B]  # make sure index is within then range
+        A_gt_path = os.path.join(self.dir_A_gt, os.path.basename(A_path).replace('.npy', '_gt.npy'))
+        B_gt_path = os.path.join(self.dir_B_gt, os.path.basename(B_path).replace('.npy', '_gt.npy'))
 
         is_finetuning = self.opt.isTrain and self.current_epoch > self.opt.n_epochs
         modified_opt = util.copyconf(self.opt, load_size=self.opt.crop_size if is_finetuning else self.opt.load_size)

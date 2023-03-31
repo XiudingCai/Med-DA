@@ -1728,7 +1728,7 @@ class SIFAGenerator(nn.Module):
     """
 
     def __init__(self, input_nc, output_nc, ngf=64, norm_layer=nn.BatchNorm2d, use_dropout=False, n_blocks=6,
-                 padding_type='reflect', no_antialias=False, no_antialias_up=False, skip=True, opt=None):
+                 padding_type='reflect', no_antialias=False, no_antialias_up=False, skip=False, opt=None):
         """Construct a Resnet-based generator
 
         Parameters:

@@ -3445,10 +3445,27 @@ def our_proposal_SR():
     show_results(metric_list, rowsA, rowsB, testB=False)
 
 def sifa_mmwhs():
+    # Dice: ~20%
+    exp = Experiment(dataset="MMWHS", model="encov0", name="encov0_ep100", load_size=256,
+                     netG='resnet_9blocks',
+                     input_nc=1, output_nc=1, dataset_mode='unaligned4mmwhs', gpu_ids='0',
+                     dataroot="/home/cas/home_ez/Datasets/MPSCL/data")
+    # exp.train(batch_size=4, n_epochs=25, n_epochs_decay=25, nce_idt=True, continue_train=False,
+    #           extra=" --save_latest_freq 5000 --display_freq 50 --num_classes 5 --nce_layers 3,7,13,18,24,28"
+    #                 " --display_ncols 7 --eval_metric --eval_freq 2000 --netF cam_mlp_sample_nls"
+    #                 " --lr_G 5e-5 --lr_F 5e-5 --lr_D 2e-4 --lr_S 0.001 --gan_mode lsgan  --num_patches 256"
+    #                 " --prj_norm LN --warmup_epochs 100")  # --netD basic3d
+
+    # exp.test(phase='train')
+    # exp.test(phase='test')
+    # # # exp.fid()
+    # exp.eval(metric_list, testB=False)
+
+    # Dice: ~20%
     exp = Experiment(dataset="MMWHS", model="sifav0", name="sifav0_ep4k", load_size=256,
                      netG='resnet_9blocks',
                      input_nc=1, output_nc=1, dataset_mode='unaligned4mmwhs', gpu_ids='0',
-                     dataroot="/home/cas/home_ez/Datasets/CT2MR_Reg")
+                     dataroot="/home/cas/home_ez/Datasets/MPSCL/data")
     exp.train(batch_size=4, n_epochs=25, n_epochs_decay=25, nce_idt=None, continue_train=False,
               extra=" --save_latest_freq 5000 --display_freq 50 --num_classes 5"
                     " --display_ncols 7 --eval_metric --eval_freq 2000")  # --netD basic3d
@@ -3461,7 +3478,7 @@ def sifa_mmwhs():
 def enco_4_ct2mr():
     exp = Experiment(dataset="MMWHS", model="encov3", name="encov3_ep100", load_size=256, netG='resnet_9blocks',
                      input_nc=1, output_nc=1, dataset_mode='unalignednpy', gpu_ids='0',
-                     dataroot="/home/cas/home_ez/Datasets/CT2MR_Reg")
+                     dataroot="/home/cas/home_ez/Datasets/MPSCL/data")
     exp.train(batch_size=8, n_epochs=50, n_epochs_decay=50, nce_idt=True, continue_train=False,
               extra=' --save_latest_freq 5000 --display_ncols 3 --nce_layers 3,7,13,18,24,28 --display_freq 100'
                     ' --lambda_IDT 10 --lambda_NCE 10 --netF cam_mlp_sample_nls --stop_idt_epochs 50'

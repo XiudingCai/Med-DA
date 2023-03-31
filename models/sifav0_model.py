@@ -263,8 +263,7 @@ class SIFAV0Model(BaseModel):
         # forward
         self.forward()  # compute fake images and reconstruction images.
         # G_A and G_B
-        self.set_requires_grad([self.netD_A, self.netD_B, self.netD_S],
-                               False)  # Ds require no gradients when optimizing Gs
+        self.set_requires_grad([self.netD_A, self.netD_B, self.netD_S], False)  # Ds require no gradients when optimizing Gs
         self.optimizer_G_A.zero_grad()  # set G_A and G_B's gradients to zero
         self.optimizer_G_Enc.zero_grad()  # set G_A and G_B's gradients to zero
         self.optimizer_G_Dec.zero_grad()  # set G_A and G_B's gradients to zero

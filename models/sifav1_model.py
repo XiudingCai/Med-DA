@@ -4,6 +4,16 @@ from util.image_pool import ImagePool
 from .base_model import BaseModel
 from . import networks
 from torch import nn
+from tqdm import tqdm
+import SimpleITK as sitk
+from monai.inferers import sliding_window_inference
+from monai.metrics import DiceMetric, MeanIoU
+from monai.utils.enums import MetricReduction
+from monai.data import decollate_batch
+from util.util import AvgrageMeter
+from monai.losses import DiceLoss
+from monai.transforms import Activations, AsDiscrete, Compose
+import numpy as np
 
 
 class SIFAV1Model(BaseModel):
@@ -53,13 +63,19 @@ class SIFAV1Model(BaseModel):
         """
         BaseModel.__init__(self, opt)
         # specify the training losses you want to print out. The training/test scripts will call <BaseModel.get_current_losses>
-        self.loss_names = ['D_A', 'G_A', 'cycle_A', 'idt_A', 'D_B', 'G_B', 'cycle_B', 'idt_B']
+        self.loss_names = ['D_A', 'G_A', 'cycle_A', 'D_B', 'G_B', 'cycle_B']
+        self.loss_names += ['Dice_train', 'IoU_train', 'Dice_val', 'IoU_val']
+        self.loss_Dice_train = torch.zeros(1)
+        self.loss_IoU_train = torch.zeros(1)
+        self.loss_Dice_val = torch.zeros(1)
+        self.loss_IoU_val = torch.zeros(1)
+
         # specify the images you want to save/display. The training/test scripts will call <BaseModel.get_current_visuals>
         visual_names_A = ['real_A', 'fake_B', 'rec_A']
         visual_names_B = ['real_B', 'fake_A', 'rec_B']
-        if self.isTrain and self.opt.lambda_identity > 0.0:  # if identity loss is used, we also visualize idt_B=G_A(B) ad idt_A=G_A(B)
-            visual_names_A.append('idt_B')
-            visual_names_B.append('idt_A')
+        # if self.isTrain and self.opt.lambda_identity > 0.0:  # if identity loss is used, we also visualize idt_B=G_A(B) ad idt_A=G_A(B)
+        #     visual_names_A.append('idt_B')
+        #     visual_names_B.append('idt_A')
 
         self.visual_names = visual_names_A + visual_names_B  # combine visualizations for A and B
         # specify the models you want to save to the disk. The training/test scripts will call <BaseModel.save_networks> and <BaseModel.load_networks>.
@@ -80,16 +96,18 @@ class SIFAV1Model(BaseModel):
         opt.netG = 'resnet_dec'
         self.netG_Dec = networks.define_G(opt.output_nc, opt.input_nc, opt.ngf, opt.netG, opt.normG,
                                           not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids, opt=self.opt)
-        self.netS = SegNet(num_classes=opt.num_classes)
+        self.netS = networks.define_G(opt.output_nc, opt.num_classes, opt.ngf, opt.netG, opt.normG,
+                                      not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids, opt=self.opt)
+        # self.netS = SegNet(num_classes=opt.num_classes)
 
         if self.isTrain:  # define discriminators
-            opt.netD = 'basic_aux'
-            self.netD_B = networks.define_D(opt.output_nc, opt.ndf, opt.netD,
-                                            opt.n_layers_D, opt.normD, opt.init_type, opt.init_gain, self.gpu_ids)
+            # opt.netD = 'basic_aux'
             opt.netD = 'basic'
             self.netD_A = networks.define_D(opt.input_nc, opt.ndf, opt.netD,
                                             opt.n_layers_D, opt.normD, opt.init_type, opt.init_gain, self.gpu_ids)
-            self.netD_S = networks.define_D(opt.input_nc, opt.ndf, opt.netD,
+            self.netD_B = networks.define_D(opt.output_nc, opt.ndf, opt.netD,
+                                            opt.n_layers_D, opt.normD, opt.init_type, opt.init_gain, self.gpu_ids)
+            self.netD_S = networks.define_D(opt.num_classes, opt.ndf, opt.netD,
                                             opt.n_layers_D, opt.normD, opt.init_type, opt.init_gain, self.gpu_ids)
 
         if self.isTrain:
@@ -128,6 +146,11 @@ class SIFAV1Model(BaseModel):
         self.real_A = input['A' if AtoB else 'B'].to(self.device)
         self.real_B = input['B' if AtoB else 'A'].to(self.device)
 
+        self.real_A_gt = input['A_gt'].to(self.device)
+        self.real_B_gt = input['B_gt'].to(self.device)
+        # print(torch.unique(self.real_A_gt), self.real_A_gt.shape)
+        # print(self.real_A.min(), self.real_A.max(), self.real_B.min(), self.real_B.max())
+
         self.image_paths = input['A_paths' if AtoB else 'B_paths']
 
     def forward(self):
@@ -136,13 +159,13 @@ class SIFAV1Model(BaseModel):
 
         self.real_B_latent = self.netG_Enc(self.real_B)  # G_B(G_A(A))
         self.fake_B_latent = self.netG_Enc(self.fake_B)  # G_B(G_A(A))
-        self.fake_A = self.netG_Dec(self.real_B_latent, self.real_B)  # G_B(B)
+        self.fake_A = self.netG_Dec(self.real_B_latent)  # G_B(B)
 
-        self.rec_B = self.netG_Dec(self.fake_B_latent, self.fake_B)  # G_B(B)
-        self.rec_A = self.netG_A(self.fake_A)
+        self.rec_A = self.netG_Dec(self.fake_B_latent)  # G_B(B)
+        self.rec_B = self.netG_A(self.fake_A)
 
-        self.real_B_SEG = self.netS(self.real_B_latent)
-        self.fake_B_SEG = self.netS(self.fake_B_latent)
+        self.real_B_SEG = self.netS(self.real_B_latent, tanh=False)
+        self.fake_B_SEG = self.netS(self.fake_B_latent, tanh=False)
 
     def backward_D_basic(self, netD, real, fake, aux=False):
         """Calculate GAN loss for the discriminator
@@ -178,13 +201,13 @@ class SIFAV1Model(BaseModel):
 
     def backward_D_A(self):
         """Calculate GAN loss for discriminator D_B"""
-        fake_B = self.fake_B_pool.query(self.fake_B)
-        self.loss_D_A = self.backward_D_basic(self.netD_A, self.real_B, fake_B)
+        fake_A = self.fake_A_pool.query(self.fake_A)
+        self.loss_D_A = self.backward_D_basic(self.netD_A, self.real_A, torch.cat([fake_A, self.rec_A], dim=0))
 
     def backward_D_B(self):
         """Calculate GAN loss for discriminator D_B"""
-        fake_A = self.fake_A_pool.query(self.fake_A)
-        self.loss_D_B = self.backward_D_basic(self.netD_B, self.real_A, fake_A, aux=True)
+        fake_B = self.fake_B_pool.query(self.fake_B)
+        self.loss_D_B = self.backward_D_basic(self.netD_B, self.real_B, fake_B)
 
     def backward_D_S(self):
         """Calculate GAN loss for discriminator D_B"""
@@ -209,61 +232,147 @@ class SIFAV1Model(BaseModel):
         #     self.loss_idt_B = 0
 
         # GAN loss D_A(G_A(A))
-        self.loss_G_A = self.criterionGAN(self.netD_A(self.fake_B), True)
+        self.loss_G_A = self.criterionGAN(self.netD_A(torch.cat([self.fake_A, self.rec_A], dim=0)), True)
         # GAN loss D_B(G_B(B))
-        self.loss_G_B = self.criterionGAN(self.netD_B(self.fake_A), True)
+        self.loss_G_B = self.criterionGAN(self.netD_B(self.fake_B), True)
+        #
+        self.loss_G_S = self.criterionGAN(self.netD_S(self.real_B_SEG), True)
+
         # Forward cycle loss || G_B(G_A(A)) - A||
         self.loss_cycle_A = self.criterionCycle(self.rec_A, self.real_A) * lambda_A
         # Backward cycle loss || G_A(G_B(B)) - B||
         self.loss_cycle_B = self.criterionCycle(self.rec_B, self.real_B) * lambda_B
         # combined loss and calculate gradients
         # self.loss_G = self.loss_G_A + self.loss_G_B + self.loss_cycle_A + self.loss_cycle_B + self.loss_idt_A + self.loss_idt_B
-        self.loss_G = self.loss_G_A + self.loss_G_B + self.loss_cycle_A + self.loss_cycle_B
+        self.loss_S = self.criterionSeg(self.fake_B_SEG, self.real_A_gt)
+
+        # self.loss_G = self.loss_G_A + self.loss_G_B + self.loss_cycle_A + self.loss_cycle_B
+        self.loss_G = self.loss_G_A + self.loss_G_B + self.loss_G_S + self.loss_cycle_A + self.loss_cycle_B + self.loss_S
         self.loss_G.backward()
 
-    def backward_S(self):
-        """Calculate GAN loss for discriminator D_B"""
-        loss_fake_B_seg = self.criterionSeg(self.fake_B_SEG, self.real_A_gt)
-        loss_cycle_A = self.criterionCycle(self.rec_A, self.real_A)
-        loss_cycle_B = self.criterionCycle(self.rec_B, self.real_B)
-        loss_G_A = (self.criterionGAN(self.netD_A(self.fake_B), True) + self.criterionGAN(self.netD_A(self.fake_B), True)) * 0.5
-        loss_G_S = self.criterionGAN(self.netD_S(self.fake_B_SEG), True)
-        self.loss_D_B =
+    # def backward_S(self):
+    #     """Calculate GAN loss for discriminator D_B"""
+    #     loss_fake_B_seg = self.criterionSeg(self.fake_B_SEG, self.real_A_gt)
+    #     loss_cycle_A = self.criterionCycle(self.rec_A, self.real_A)
+    #     loss_cycle_B = self.criterionCycle(self.rec_B, self.real_B)
+    #     loss_G_A = (self.criterionGAN(self.netD_A(self.fake_B), True) + self.criterionGAN(self.netD_A(self.fake_B), True)) * 0.5
+    #     loss_G_S = self.criterionGAN(self.netD_S(self.fake_B_SEG), True)
+    #     self.loss_D_B =
 
     def optimize_parameters(self):
         """Calculate losses, gradients, and update network weights; called in every training iteration"""
         # forward
         self.forward()  # compute fake images and reconstruction images.
-        # G_A and G_B
-        self.set_requires_grad([self.netD_A, self.netD_B], False)  # Ds require no gradients when optimizing Gs
-        self.optimizer_G_A.zero_grad()  # set G_A and G_B's gradients to zero
-        self.optimizer_G_Dec.zero_grad()  # set G_A and G_B's gradients to zero
-        self.backward_G()  # calculate gradients for G_A and G_B
-        self.optimizer_G_A.step()  # update G_A and G_B's weights
-        self.optimizer_G_Dec.step()  # update G_A and G_B's weights
-
-        self.forward()
-        self.optimizer_G_Enc.zero_grad()  # set G_A and G_B's gradients to zero
-        self.optimizer_S.zero_grad()  # set G_A and G_B's gradients to zero
-        self.backward_S()  # calculate gradients for G_A and G_B
-        self.optimizer_G_Enc.step()  # update G_A and G_B's weights
-        self.optimizer_S.step()  # update G_A and G_B's weights
 
         # D_A and D_B
-        self.set_requires_grad([self.netD_A, self.netD_B], True)
+        self.set_requires_grad([self.netD_A, self.netD_B, self.netD_S], True)
         self.optimizer_D.zero_grad()  # set D_A and D_B's gradients to zero
         self.backward_D_A()  # calculate gradients for D_A
         self.backward_D_B()  # calculate graidents for D_B
+        self.backward_D_S()  # calculate graidents for D_B
         self.optimizer_D.step()  # update D_A and D_B's weights
+
+        # G_A and G_B
+        self.set_requires_grad([self.netD_A, self.netD_B, self.netD_S], False)
+        self.optimizer_G_A.zero_grad()  # set G_A and G_B's gradients to zero
+        self.optimizer_G_Enc.zero_grad()  # set G_A and G_B's gradients to zero
+        self.optimizer_G_Dec.zero_grad()  # set G_A and G_B's gradients to zero
+        self.optimizer_S.zero_grad()  # set G_A and G_B's gradients to zero
+
+        self.backward_G()  # calculate gradients for G_A and G_B
+
+        self.optimizer_G_A.step()  # update G_A and G_B's weights
+        self.optimizer_G_Enc.step()  # update G_A and G_B's weights
+        self.optimizer_G_Dec.step()  # update G_A and G_B's weights
+        self.optimizer_S.step()  # update G_A and G_B's weights
+
+    def val_metrics(self, epoch, train_dataloader, val_dataloader):
+        self.netS.eval()
+
+        dice_log = DiceMetric(include_background=False,
+                              reduction=MetricReduction.MEAN_BATCH,
+                              get_not_nans=True)
+        IoU_log = MeanIoU(include_background=False,
+                          reduction=MetricReduction.MEAN_BATCH,
+                          get_not_nans=True)
+        # train
+        dice_train = AvgrageMeter()
+        dice_train.reset()
+        iou_train = AvgrageMeter()
+        iou_train.reset()
+
+        # post_sigmoid = Activations(sigmoid=True)
+        post_pred = AsDiscrete(argmax=True, to_onehot=self.opt.num_classes)
+        post_label = AsDiscrete(to_onehot=self.opt.num_classes)
+
+        for i, data in tqdm(enumerate(val_dataloader)):
+            self.set_input(data)
+            # reset
+            dice_log.reset()
+            IoU_log.reset()
+
+            fake_B_latent = self.netG_Enc(self.netG_A(self.real_A))
+            real_A_SEG = self.netS(fake_B_latent, tanh=False)
+
+            preds_list = [post_pred(x) for x in decollate_batch(real_A_SEG)]
+            labels_list = [post_label(y) for y in decollate_batch(self.real_A_gt)]
+
+            dice_log(y_pred=preds_list, y=labels_list)
+            dice, not_nans = dice_log.aggregate()
+            dice_train.update(dice.cpu().numpy(), n=not_nans.cpu().numpy())
+
+            # iou
+            IoU_log(y_pred=preds_list, y=labels_list)
+            iou, not_nans = IoU_log.aggregate()
+            iou_train.update(iou.cpu().numpy(), n=not_nans.cpu().numpy())
+
+        # val
+        dice_val = AvgrageMeter()
+        dice_val.reset()
+        iou_val = AvgrageMeter()
+        iou_val.reset()
+
+        for i, data in tqdm(enumerate(val_dataloader)):
+            self.set_input(data)
+            # reset
+            dice_log.reset()
+            IoU_log.reset()
+
+            real_B_latent = self.netG_Enc(self.real_B)
+            real_B_SEG = self.netS(real_B_latent, tanh=False)
+
+            preds_list = [post_pred(x) for x in decollate_batch(real_B_SEG)]
+            labels_list = [post_label(y) for y in decollate_batch(self.real_B_gt)]
+
+            # dice
+            dice_log(y_pred=preds_list, y=labels_list)
+            dice, not_nans = dice_log.aggregate()
+            dice_val.update(dice.cpu().numpy(), n=not_nans.cpu().numpy())
+
+            # iou
+            IoU_log(y_pred=preds_list, y=labels_list)
+            iou, not_nans = IoU_log.aggregate()
+            iou_val.update(iou.cpu().numpy(), n=not_nans.cpu().numpy())
+
+        self.loss_Dice_train = np.nanmean(dice_train.avg)
+        self.loss_IoU_train = np.nanmean(iou_train.avg)
+        self.loss_Dice_val = np.nanmean(dice_val.avg)
+        self.loss_IoU_val = np.nanmean(iou_val.avg)
+
+        print(f"EP: {epoch}, Train Dice: {self.loss_Dice_train:.4f} ({dice_train.avg}), "
+              f"Train IoU: {self.loss_IoU_train:.4f} ({iou_train.avg}), "
+              f"Val Dice: {self.loss_Dice_val:.4f} ({dice_val.avg}), "
+              f"Val IoU: {self.loss_IoU_val:.4f} ({iou_val.avg})")
+        self.netS.train()
 
 
 class SegNet(nn.Module):
     def __init__(self, num_classes=2):
         super().__init__()
         self.model = nn.Sequential(
-            nn.Conv2d(512, num_classes, kernel_size=1, stride=1, padding=0),
+            nn.Conv2d(256, num_classes, kernel_size=1, stride=1, padding=0),
             nn.InstanceNorm2d(num_classes),
-            nn.Upsample(scale_factor=8, mode='bilinear')
+            nn.Upsample(scale_factor=4, mode='bilinear')
         )
 
     def forward(self, x):
