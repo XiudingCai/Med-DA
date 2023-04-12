@@ -66,9 +66,9 @@ class SIFAV0Model(BaseModel):
         self.loss_names = ['D_A', 'G_A', 'cycle_A', 'D_B', 'G_B', 'cycle_B']
         self.loss_names += ['Dice_train', 'IoU_train', 'Dice_val', 'IoU_val']
         self.loss_Dice_train = torch.zeros(1)
-        self.loss_IoU_train = torch.zeros(1)
+        # self.loss_IoU_train = torch.zeros(1)
         self.loss_Dice_val = torch.zeros(1)
-        self.loss_IoU_val = torch.zeros(1)
+        # self.loss_IoU_val = torch.zeros(1)
 
         # specify the images you want to save/display. The training/test scripts will call <BaseModel.get_current_visuals>
         visual_names_A = ['real_A', 'fake_B', 'rec_A']
@@ -290,14 +290,14 @@ class SIFAV0Model(BaseModel):
         dice_log = DiceMetric(include_background=False,
                               reduction=MetricReduction.MEAN_BATCH,
                               get_not_nans=True)
-        IoU_log = MeanIoU(include_background=False,
-                          reduction=MetricReduction.MEAN_BATCH,
-                          get_not_nans=True)
+        # IoU_log = MeanIoU(include_background=False,
+        #                   reduction=MetricReduction.MEAN_BATCH,
+        #                   get_not_nans=True)
         # train
         dice_train = AvgrageMeter()
         dice_train.reset()
-        iou_train = AvgrageMeter()
-        iou_train.reset()
+        # iou_train = AvgrageMeter()
+        # iou_train.reset()
 
         # post_sigmoid = Activations(sigmoid=True)
         post_pred = AsDiscrete(argmax=True, to_onehot=self.opt.num_classes)
@@ -307,7 +307,7 @@ class SIFAV0Model(BaseModel):
             self.set_input(data)
             # reset
             dice_log.reset()
-            IoU_log.reset()
+            # IoU_log.reset()
 
             fake_B_latent = self.netG_Enc(self.netG_A(self.real_A))
             real_A_SEG = self.netS(fake_B_latent, tanh=False)
@@ -320,9 +320,9 @@ class SIFAV0Model(BaseModel):
             dice_train.update(dice.cpu().numpy(), n=not_nans.cpu().numpy())
 
             # iou
-            IoU_log(y_pred=preds_list, y=labels_list)
-            iou, not_nans = IoU_log.aggregate()
-            iou_train.update(iou.cpu().numpy(), n=not_nans.cpu().numpy())
+            # IoU_log(y_pred=preds_list, y=labels_list)
+            # iou, not_nans = IoU_log.aggregate()
+            # iou_train.update(iou.cpu().numpy(), n=not_nans.cpu().numpy())
 
         # val
         dice_val = AvgrageMeter()
@@ -334,7 +334,7 @@ class SIFAV0Model(BaseModel):
             self.set_input(data)
             # reset
             dice_log.reset()
-            IoU_log.reset()
+            # IoU_log.reset()
 
             real_B_latent = self.netG_Enc(self.real_B)
             real_B_SEG = self.netS(real_B_latent, tanh=False)
@@ -348,19 +348,17 @@ class SIFAV0Model(BaseModel):
             dice_val.update(dice.cpu().numpy(), n=not_nans.cpu().numpy())
 
             # iou
-            IoU_log(y_pred=preds_list, y=labels_list)
-            iou, not_nans = IoU_log.aggregate()
-            iou_val.update(iou.cpu().numpy(), n=not_nans.cpu().numpy())
+            # IoU_log(y_pred=preds_list, y=labels_list)
+            # iou, not_nans = IoU_log.aggregate()
+            # iou_val.update(iou.cpu().numpy(), n=not_nans.cpu().numpy())
 
         self.loss_Dice_train = np.nanmean(dice_train.avg)
-        self.loss_IoU_train = np.nanmean(iou_train.avg)
+        # self.loss_IoU_train = np.nanmean(iou_train.avg)
         self.loss_Dice_val = np.nanmean(dice_val.avg)
-        self.loss_IoU_val = np.nanmean(iou_val.avg)
+        # self.loss_IoU_val = np.nanmean(iou_val.avg)
 
         print(f"EP: {epoch}, Train Dice: {self.loss_Dice_train:.4f} ({dice_train.avg}), "
-              f"Train IoU: {self.loss_IoU_train:.4f} ({iou_train.avg}), "
-              f"Val Dice: {self.loss_Dice_val:.4f} ({dice_val.avg}), "
-              f"Val IoU: {self.loss_IoU_val:.4f} ({iou_val.avg})")
+              f"Val Dice: {self.loss_Dice_val:.4f} ({dice_val.avg})")
         self.netS.train()
 
 
